@@ -9,6 +9,7 @@ const PDF = path.join(__dirname, '..', 'fixtures', 'sample-form.pdf');
 const SHOTS = path.resolve(process.env.SCREENSHOTS_DIR || 'test-results/screenshots');
 const IPP_OUT = path.resolve('test-results/ipp');
 const PASSWORD = 'test-pass-123';
+const TODAY = (() => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); })();
 
 test.describe.configure({ mode: 'serial' });
 
@@ -61,7 +62,7 @@ test('admin places fields by double-click and configures prefill modes', async (
   const box = await admin.locator('.ov').boundingBox(); if (!box) throw new Error('no overlay');
   const sc = box.width / 595; // sample form is A4 portrait, 595 x 842 pt
   const defs = [
-    ['Full name', 'text', 'browser', 150, 700], ['Date', 'date', 'none', 150, 670], ['Reference', 'text', 'url', 400, 670],
+    ['Full name', 'text', 'browser', 150, 700], ['Date', 'date', 'today', 150, 670], ['Reference', 'text', 'url', 400, 670],
     ['Address', 'textarea', 'browser', 150, 640], ['Issued by', 'text', 'instance', 150, 560],
   ];
   for (const [label, type, pre, x, y] of defs) {
@@ -79,6 +80,20 @@ test('admin places fields by double-click and configures prefill modes', async (
   await expect(admin.locator('.mk')).toHaveCount(5);
   // keys are derived from labels
   await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('issued_by');
+  // "today" is only offered for date fields
+  await expect(admin.locator('#fp select').last().locator('option[value=today]')).toHaveCount(0);
+  await admin.locator('.fitem', { hasText: 'Date' }).click();
+  await expect(admin.locator('#fp select').last().locator('option[value=today]')).toHaveCount(1);
+  // fixed text: placed by the admin, printed as is, never shown to users
+  await admin.click('text=Add field');
+  await admin.fill('#fp input[type=text] >> nth=0', 'Footer');
+  await admin.locator('#fp select').nth(0).selectOption('static');
+  await expect(admin.locator('#fp select')).toHaveCount(1); // no prefill select for fixed text
+  await expect(admin.locator('#fp label.chk')).toHaveCount(0); // no "required" either
+  await admin.fill('#fp textarea', 'Office copy - do not hand out');
+  await expect(admin.locator('.fitem', { hasText: 'Footer' }).locator('.tag')).toHaveText('fixed text');
+  await expect(admin.locator('.mk')).toHaveCount(6);
+  await admin.locator('.fitem', { hasText: 'Issued by' }).click();
 });
 
 test('admin drags a marker and the coordinates follow', async () => {
@@ -107,7 +122,7 @@ test('admin saves metadata and gets a direct link', async () => {
   link = await admin.locator('input[readonly]').inputValue();
   expect(link).toMatch(/^http:\/\/127\.0\.0\.1:8099\/d\/[\w-]+$/);
   // data survives a reload
-  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(5);
+  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(6);
   await expect(admin.locator('input[placeholder^="e.g."]')).toHaveValue('school, demo');
 });
 
@@ -142,6 +157,9 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_reference')).toHaveValue('REF-4711');
   await expect(user.locator('#f_issued_by')).toHaveValue('Office Bietigheim');
+  await expect(user.locator('#f_date')).toHaveValue(TODAY);
+  await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
+  await expect(user.locator('.panel label')).toHaveCount(5);
   await expect(user.locator('#f_full_name')).toHaveValue('');
   await user.click('button.pri'); // Print with the required field empty
   await expect(user.locator('#toast.bad')).toContainText('Please fill in: Full name');
@@ -184,7 +202,7 @@ test('browser-remembered values survive a reload, link values do not', async () 
   await expect(user.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
   await expect(user.locator('#f_address')).toHaveValue(/74321/);
   await expect(user.locator('#f_reference')).toHaveValue('');
-  await expect(user.locator('#f_date')).toHaveValue('');
+  await expect(user.locator('#f_date')).toHaveValue(TODAY); // "today" is recomputed on every open, not remembered
 });
 
 test('image print fallback renders pages and calls window.print', async () => {

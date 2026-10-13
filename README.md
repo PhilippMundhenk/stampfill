@@ -24,8 +24,11 @@ build step. It is meant for a school office, a club, a small company, a househol
 
 - **Field editor**: double-click on the rendered page to add a field, drag to move it. Text,
   multi-line text, date (four formats) and checkbox fields. Wrap width, font size, required flag.
-- **Prefill** per field: remembered in the user's browser, fixed for this instance, or carried in
-  the link (`/d/<link>#key=value`). Users get a "Copy link with values" button.
+- **Prefill** per field: remembered in the user's browser, fixed for this instance, carried in
+  the link (`/d/<link>#key=value`), or today's date for date fields. Users get a "Copy link with
+  values" button.
+- **Fixed text**: blocks the admin writes once (a footer note, an office address) that are printed
+  on every copy and never shown to users as an input.
 - **Printing**: browser print (vector PDF on desktop Chromium, high-resolution page images
   everywhere else), PDF download, and server-side printing through IPP (CUPS or any printer
   that accepts PDF).

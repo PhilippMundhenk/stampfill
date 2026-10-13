@@ -36,6 +36,10 @@ test('cleanFields sanitises, defaults and de-duplicates keys', () => {
   assert.equal(out[1].type, 'text'); assert.equal(out[1].value, 'fixed'); assert.equal(out[1].dateFormat, 'DD.MM.YYYY');
   assert.equal(out[2].id, 'abcd1234'); assert.equal(out[2].label, 'custom_key'); assert.equal(out[2].page, 1);
   assert.match(out[0].id, /^[\w-]{4,24}$/);
+  const pre = app.cleanFields([{ label: 'When', type: 'date', prefill: 'today' }, { label: 'Who', type: 'text', prefill: 'today' }], 1);
+  assert.equal(pre[0].prefill, 'today', 'today is allowed on date fields'); assert.equal(pre[1].prefill, 'none', 'today is dropped on other types');
+  const st = app.cleanFields([{ label: 'Note', type: 'static', value: 'Fixed\ntext', required: true, prefill: 'browser' }], 1)[0];
+  assert.equal(st.type, 'static'); assert.equal(st.value, 'Fixed\ntext'); assert.equal(st.required, false); assert.equal(st.prefill, 'none');
   assert.deepEqual(app.cleanFields('not a list', 1), []);
   assert.equal(app.cleanFields(Array.from({ length: 300 }, (_, i) => ({ label: 'f' + i })), 1).length, 200);
 });
@@ -71,7 +75,8 @@ test('renderPdf stamps values onto the template', async (t) => {
     { label: 'Name', x: 100, y: 700 }, { label: 'When', type: 'date', x: 100, y: 680, dateFormat: 'DD.MM.YYYY' },
     { label: 'Agree', type: 'checkbox', x: 100, y: 660 }, { label: 'Notes', type: 'textarea', x: 100, y: 640, maxWidth: 200 },
   ], 1);
-  const pdf = await app.renderPdf({ id: 'doc1' }, fields, { name: 'Jürgen Müller', when: '2026-10-13', agree: '1', notes: 'line one\nline two' });
+  fields.push(...app.cleanFields([{ label: 'Note', type: 'static', value: 'Do not write below', x: 100, y: 600 }], 1));
+  const pdf = await app.renderPdf({ id: 'doc1' }, fields, { name: 'Jürgen Müller', when: '2026-10-13', agree: '1', notes: 'line one\nline two', note: 'ignored' });
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
   assert.ok(pdf.length > fs.statSync(SAMPLE).size, 'output should contain added content');
   const { PDFDocument } = require('pdf-lib');

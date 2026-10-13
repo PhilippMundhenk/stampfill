@@ -66,10 +66,11 @@ test('upload, edit and render a document', async () => {
   doc = await r.json(); assert.equal(doc.title, 'Sample form'); assert.equal(doc.pages, 1); assert.deepEqual(doc.fields, []);
   r = await call('PUT', '/api/admin/docs/' + doc.id, {
     title: 'Sample form', description: 'desc', tags: ['demo', 'demo', ' x '], listed: true,
-    fields: [{ label: 'Full name', x: 150, y: 700, required: true, prefill: 'browser' }, { label: 'Issued by', x: 150, y: 560, prefill: 'instance', value: 'Office' }],
+    fields: [{ label: 'Full name', x: 150, y: 700, required: true, prefill: 'browser' }, { label: 'Issued by', x: 150, y: 560, prefill: 'instance', value: 'Office' },
+      { label: 'Footer', type: 'static', value: 'Office copy', x: 100, y: 100 }],
   });
-  doc = await r.json(); assert.deepEqual(doc.tags, ['demo', 'x']); assert.equal(doc.fields.length, 2); assert.equal(doc.listed, true);
-  const list = await (await call('GET', '/api/admin/docs')).json(); assert.equal(list.length, 1); assert.equal(list[0].fields, 2);
+  doc = await r.json(); assert.deepEqual(doc.tags, ['demo', 'x']); assert.equal(doc.fields.length, 3); assert.equal(doc.listed, true);
+  const list = await (await call('GET', '/api/admin/docs')).json(); assert.equal(list.length, 1); assert.equal(list[0].fields, 3);
   r = await call('POST', '/api/admin/docs/' + doc.id + '/render', { fields: doc.fields }); assert.equal(r.status, 200);
   assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal(Buffer.from(await r.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
@@ -82,6 +83,7 @@ test('public API exposes listed documents and renders with values', async () => 
   assert.equal(pub.docs[0].id, undefined, 'internal id must not leak');
   const d = await (await fetch(base + '/api/d/' + doc.slug)).json();
   assert.equal(d.serverPrint, false); assert.equal(d.fields[1].value, 'Office'); assert.equal(d.fields[0].value, '');
+  assert.equal(d.fields.length, 2, 'fixed-text fields are not part of the public form');
   const r = await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'Test' } }) });
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal((await fetch(base + '/api/d/nope')).status, 404);

@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Field type "Fixed text": set by the admin, stamped on every print, not editable or visible as an
+  input on the public form.
+- Prefill mode "Today's date" for date fields.
 - `PUID`/`PGID` in Compose and `.env.example` to run the container as the owner of a bind-mounted
   data folder; README section on file permissions.
 - Startup check that refuses to run with an unwritable data directory and prints the UID/GID in use.

@@ -118,8 +118,8 @@ const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v, def, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def; };
 
 // ---------------------------------------------------------------- documents
-const TYPES = ['text', 'textarea', 'date', 'checkbox'];
-const PREFILL = ['none', 'browser', 'instance', 'url'];
+const TYPES = ['text', 'textarea', 'date', 'checkbox', 'static']; // static: fixed text set by the admin, not editable
+const PREFILL = ['none', 'browser', 'instance', 'url', 'today']; // today: date fields only
 const DATEFMT = ['DD.MM.YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
 const keyOf = (s) => str(s, 60).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 function cleanFields(list, pages) {
@@ -128,13 +128,15 @@ function cleanFields(list, pages) {
     let key = keyOf(f.key || f.label), base = key, i = 2;
     while (seen.has(key)) key = base + '_' + i++;
     seen.add(key);
+    const type = TYPES.includes(f.type) ? f.type : 'text';
+    const prefill = type === 'static' ? 'none' : PREFILL.includes(f.prefill) && !(f.prefill === 'today' && type !== 'date') ? f.prefill : 'none';
     return {
       id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key,
-      type: TYPES.includes(f.type) ? f.type : 'text', required: !!f.required,
+      type, required: type !== 'static' && !!f.required,
       page: Math.round(num(f.page, 1, 1, pages)), x: +num(f.x, 50, -5000, 5000).toFixed(1), y: +num(f.y, 50, -5000, 5000).toFixed(1),
       size: num(f.size, 11, 4, 72), maxWidth: num(f.maxWidth, 0, 0, 5000),
       dateFormat: DATEFMT.includes(f.dateFormat) ? f.dateFormat : DATEFMT[0],
-      prefill: PREFILL.includes(f.prefill) ? f.prefill : 'none', value: str(f.value, 2000),
+      prefill, value: str(f.value, 2000),
     };
   });
 }
@@ -143,7 +145,7 @@ const adminDoc = (d) => d;
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
   serverPrint: !!db.settings.printerUrl && (db.settings.publicPrint || isAdmin(req)),
-  fields: d.fields.map((f) => ({ key: f.key, label: f.label, type: f.type, required: f.required, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
+  fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, type: f.type, required: f.required, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
 });
 async function inspectPdf(buf) {
   if (buf.length < 5 || buf.subarray(0, 5).toString() !== '%PDF-') throw new HttpErr(400, 'That file is not a PDF');
@@ -166,10 +168,10 @@ async function renderPdf(doc, fields, values) {
   const pages = pdf.getPages();
   for (const f of fields) {
     const page = pages[f.page - 1]; if (!page) continue;
-    let text = str(values[f.key], 4000);
+    let text = f.type === 'static' ? f.value : str(values[f.key], 4000); // fixed text ignores whatever the user sent
     if (f.type === 'checkbox') text = text && text !== '0' && text !== 'false' ? 'X' : '';
     else if (f.type === 'date') text = fmtDate(text.trim(), f.dateFormat);
-    else if (f.type !== 'textarea') text = text.replace(/\s+/g, ' ');
+    else if (f.type !== 'textarea' && f.type !== 'static') text = text.replace(/\s+/g, ' ');
     text = [...text.replace(/\r/g, '').replace(/\t/g, ' ')].map((ch) => (ch === '\n' || encodable(ch) ? ch : '?')).join('').trim();
     if (!text) continue;
     page.drawText(text, {
@@ -180,7 +182,7 @@ async function renderPdf(doc, fields, values) {
   return Buffer.from(await pdf.save());
 }
 const sampleValues = (fields) => Object.fromEntries(fields.map((f) =>
-  [f.key, f.type === 'checkbox' ? '1' : f.type === 'date' ? new Date().toISOString().slice(0, 10) : f.value || f.label]));
+  [f.key, f.type === 'checkbox' ? '1' : f.type === 'date' ? new Date().toISOString().slice(0, 10) : f.value || (f.type === 'static' ? '' : f.label)]));
 function cleanValues(v) {
   const out = {}; if (v && typeof v === 'object') for (const k of Object.keys(v).slice(0, 300)) out[k] = str(v[k], 4000);
   return out;
@@ -511,14 +513,15 @@ async function formView() {
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
   const put = (f, v) => { if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
-  const HINT = { browser: 'Remembered in this browser', url: 'Can be carried in a link', instance: '' };
+  const HINT = { browser: 'Remembered in this browser', url: 'Can be carried in a link', instance: '', today: "Today's date" };
+  const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 
   const form = h('div', { class: 'panel' });
   for (const f of doc.fields) {
     const inp = inputs[f.key] = f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : f.type === 'date' ? 'date' : 'text' });
     inp.id = 'f_' + f.key;
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
-    put(f, fromUrl.has(f.key) ? fromUrl.get(f.key) : saved != null ? saved : f.prefill === 'instance' ? f.value : '');
+    put(f, fromUrl.has(f.key) ? fromUrl.get(f.key) : saved != null ? saved : f.prefill === 'instance' ? f.value : f.prefill === 'today' ? today() : '');
     inp.addEventListener('input', () => { if (f.prefill === 'browser') store.set(f.key, get(f)); rows[f.key].classList.remove('bad'); schedule(); });
     const name = f.label + (f.required ? ' *' : '');
     rows[f.key] = f.type === 'checkbox'
@@ -619,9 +622,10 @@ async function formView() {
 const ADMIN_HTML = page('Forms admin', '<header><a href="/admin" id="home">' + LOGO_SVG + '<span id="homeT">Forms admin</span></a><span class="sp"></span><span id="nav" class="row"></span></header>', String.raw`
 const app = $('#app');
 let me = null, dirty = false, lastHash = location.hash;
-const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)' };
-const PRE = { none: 'No prefill', browser: 'Remember per user (browser)', instance: 'Fixed value (this instance)', url: 'From link (URL)' };
-const PRE_SHORT = { none: '', browser: 'browser', instance: 'fixed', url: 'link' };
+const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)', static: 'Fixed text (not editable)' };
+const PRE = { none: 'No prefill', browser: 'Remember per user (browser)', instance: 'Fixed value (this instance)', url: 'From link (URL)', today: "Today's date" };
+const PRE_SHORT = { none: '', browser: 'browser', instance: 'fixed', url: 'link', today: 'today' };
+const preFor = type => type === 'date' ? PRE : Object.fromEntries(Object.entries(PRE).filter(([k]) => k !== 'today'));
 const DATEFMT = ['DD.MM.YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
 const keyOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 const linkOf = d => location.origin + '/d/' + d.slug;
@@ -716,7 +720,7 @@ async function editView(id) {
     if (!vp) return;
     ov.replaceChildren(...d.fields.filter(f => f.page === pageNo).map(f => {
       const pt = vp.convertToViewportPoint(f.x, f.y), fh = f.size * vp.scale;
-      const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '00.00.0000' : (f.value || f.label);
+      const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '00.00.0000' : (f.value || f.label).split('\n')[0];
       const w = (f.maxWidth > 0 ? f.maxWidth : Math.max(f.size, sample.length * f.size * 0.52)) * vp.scale;
       const m = h('div', { class: 'mk' + (f.id === sel ? ' on' : ''), title: 'Drag to move', style: 'left:' + pt[0] + 'px;top:' + (pt[1] - fh * 0.85) + 'px;width:' + w + 'px;height:' + fh * 1.1 + 'px' }, h('span', {}, f.label));
       m.addEventListener('pointerdown', e => drag(e, f, m));
@@ -767,7 +771,7 @@ async function editView(id) {
   }
   function flist() {
     fieldsBox.replaceChildren(d.fields.length ? h('div', { class: 'flist' }, d.fields.map(f => h('div', { class: 'fitem' + (f.id === sel ? ' on' : ''), onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); } },
-      h('b', {}, f.label), PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), h('span', { class: 'muted small' }, 'p' + f.page))))
+      h('b', {}, f.label), f.type === 'static' ? h('span', { class: 'tag' }, 'fixed text') : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), h('span', { class: 'muted small' }, 'p' + f.page))))
       : h('p', { class: 'empty small' }, 'No fields yet. Double-click on the page where the text should go, or use "Add field".'));
   }
   function side() {
@@ -779,18 +783,21 @@ async function editView(id) {
     const keyIn = bind(h('input', { type: 'text', value: f.key }), 'key', el => keyOf(el.value));
     const labelIn = h('input', { type: 'text', value: f.label });
     labelIn.addEventListener('input', () => { const auto = f.key === keyOf(f.label); f.label = labelIn.value; if (auto) { f.key = keyOf(f.label); keyIn.value = f.key; } mark(); later(); flist(); });
-    const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => { f[prop] = s.value; mark(); side(); redraw().catch(fail); }); return s; };
+    const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => { f[prop] = s.value; if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.type === 'static') { f.prefill = 'none'; f.required = false; } mark(); side(); redraw().catch(fail); }); return s; };
+    const fixed = f.type === 'static';
     propsBox.replaceChildren(h('h2', {}, 'Selected field'), h('div', { class: 'panel' },
-      h('label', { style: 'margin-top:0' }, 'Label (shown on the form)'), labelIn,
+      h('label', { style: 'margin-top:0' }, fixed ? 'Label (only shown in this editor)' : 'Label (shown on the form)'), labelIn,
       h('div', { class: 'g2' }, h('div', {}, h('label', {}, 'Type'), sel2('type', TYPES)), h('div', {}, h('label', {}, 'Key (for links)'), keyIn)),
       f.type === 'date' && h('div', {}, h('label', {}, 'Date format'), sel2('dateFormat', Object.fromEntries(DATEFMT.map(x => [x, x])))),
       h('div', { class: 'g4' }, h('div', {}, h('label', {}, 'Page'), numIn('page', 1, 1)), h('div', {}, h('label', {}, 'X (pt)'), numIn('x', 0.5)), h('div', {}, h('label', {}, 'Y (pt)'), numIn('y', 0.5)), h('div', {}, h('label', {}, 'Size'), numIn('size', 0.5, 4))),
       f.type !== 'checkbox' && h('div', {}, h('label', {}, 'Wrap width in pt (0 = no wrapping)'), numIn('maxWidth', 5, 0)),
-      h('label', {}, 'Prefill'), sel2('prefill', PRE),
+      fixed && h('div', {}, h('label', {}, 'Text (printed as is, users cannot change it)'), bind(h('textarea', { rows: 3, value: f.value, placeholder: 'e.g. a footer note or an office address' }), 'value', null, flist)),
+      !fixed && h('label', {}, 'Prefill'), !fixed && sel2('prefill', preFor(f.type)),
       f.prefill === 'instance' && h('div', {}, h('label', {}, 'Fixed value'), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: 'text', value: f.value, placeholder: f.type === 'date' ? 'YYYY-MM-DD' : f.type === 'checkbox' ? '1 = ticked' : '' }), 'value')),
       f.prefill === 'browser' && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
       f.prefill === 'url' && h('div', { class: 'hint' }, 'Filled from the link, e.g. ' + linkOf(d) + '#' + f.key + '=value. Users get a "Copy link with values" button.'),
-      h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), 'Required'),
+      f.prefill === 'today' && h('div', { class: 'hint' }, 'Set to the current date when the form opens. The user can still change it.'),
+      !fixed && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), 'Required'),
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'danger', onclick: () => { d.fields = d.fields.filter(x => x !== f); sel = null; mark(); side(); redraw().catch(fail); } }, 'Remove field'))));
   }
 
