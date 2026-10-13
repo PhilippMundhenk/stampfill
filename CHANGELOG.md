@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Field type "Signature": users draw on screen (touch or mouse, with undo and clear; the drawing
+  is trimmed to the ink on a transparent background) or upload a picture.
 - Documentation: design overview (`docs/design.md`), architecture decision records
   (`docs/adr/`), deployment without Docker on Uberspace or with systemd
   (`docs/deploy-without-docker.md`, `deploy/systemd/`).

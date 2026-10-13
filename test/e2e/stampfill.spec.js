@@ -87,7 +87,7 @@ test('admin places fields by double-click and configures prefill modes', async (
   const sc = box.width / 595; // sample form is A4 portrait, 595 x 842 pt
   const defs = [
     ['Full name', 'text', 'browser', 150, 700], ['Date', 'date', 'today', 150, 670], ['Reference', 'text', 'url', 400, 670],
-    ['Address', 'textarea', 'browser', 150, 640], ['Birthday', 'date', 'instance', 400, 640], ['Signature', 'image', 'browser', 400, 520], ['Issued by', 'text', 'instance', 150, 560],
+    ['Address', 'textarea', 'browser', 150, 640], ['Birthday', 'date', 'instance', 400, 640], ['Signature', 'signature', 'browser', 400, 520], ['Issued by', 'text', 'instance', 150, 560],
     ['Agree', 'checkbox', 'none', 150, 500],
   ];
   for (const [label, type, pre, x, y] of defs) {
@@ -287,6 +287,19 @@ test('form prefills from the link and from fixed values, validates required fiel
     await user.fill('#f_full_name', 'Jürgen Müller-Weiß'); await user.fill('#f_date', '2026-10-13');
     await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
   });
+  // signature pad: cancel, empty, then a real stroke
+  await user.click('text=Draw signature'); await expect(user.locator('dialog.sigdlg')).toBeVisible();
+  await user.click('dialog.sigdlg >> text=Cancel'); await expect(user.locator('dialog.sigdlg')).toHaveCount(0);
+  await user.click('text=Draw signature');
+  await user.click('text=Use signature'); await expect(user.locator('#toast.bad')).toHaveText('Nothing drawn yet');
+  const cv = await user.locator('canvas.sig').boundingBox(); if (!cv) throw new Error('no pad');
+  const stroke = async (dx) => { await user.mouse.move(cv.x + 20 + dx, cv.y + 70); await user.mouse.down(); await user.mouse.move(cv.x + 90 + dx, cv.y + 30, { steps: 6 }); await user.mouse.move(cv.x + 180 + dx, cv.y + 80, { steps: 6 }); await user.mouse.up(); };
+  await stroke(0); await user.click('text=Undo'); await stroke(0); await stroke(200); await user.click('text=Clear'); await stroke(40);
+  await settle(user, () => user.click('text=Use signature'));
+  await expect(user.locator('dialog.sigdlg')).toHaveCount(0);
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
+  expect(await user.locator('.imgbox:has(#f_signature) .thumb').evaluate((im) => im.naturalWidth > 100 && im.naturalHeight > 30 && im.naturalHeight < im.naturalWidth)).toBe(true); // trimmed to the ink
+  // or upload a picture instead
   await settle(user, () => user.locator('#f_signature').setInputFiles({ name: 'sig.png', mimeType: 'image/png', buffer: PNG }));
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
   await expect(user.locator('.imgbox:has(#f_signature) button', { hasText: 'Replace image' })).toBeVisible();

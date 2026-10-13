@@ -132,12 +132,13 @@ const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v, def, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def; };
 
 // ---------------------------------------------------------------- documents
-const TYPES = ['text', 'textarea', 'date', 'checkbox', 'image', 'static']; // static: fixed text set by the admin, not editable
+const TYPES = ['text', 'textarea', 'date', 'checkbox', 'image', 'signature', 'static']; // static: fixed text set by the admin, not editable
+const IMG = (t) => t === 'image' || t === 'signature'; // both hold a picture; a signature can also be drawn on screen
 const PREFILL = ['none', 'browser', 'instance', 'url', 'today']; // today: date fields only; url: not for images
 function cleanPrefill(type, p) {
   if (!PREFILL.includes(p) || type === 'static') return 'none';
   if (p === 'today' && type !== 'date') return 'none';
-  if (p === 'url' && type === 'image') return 'none';
+  if (p === 'url' && IMG(type)) return 'none';
   return p;
 }
 const IMG_NAME = /^[\w-]+\.(png|jpg)$/;
@@ -148,7 +149,7 @@ function imageFromValue(f, v) { // the image sent with the form wins, else the a
   return null;
 }
 function pruneImages() { // drop files no field refers to any more
-  const used = new Set(db.docs.flatMap((d) => d.fields.filter((f) => f.type === 'image' && f.value).map((f) => f.value)));
+  const used = new Set(db.docs.flatMap((d) => d.fields.filter((f) => IMG(f.type) && f.value).map((f) => f.value)));
   for (const n of fs.readdirSync(IMAGES)) if (!used.has(n)) fs.rmSync(path.join(IMAGES, n), { force: true });
 }
 const DATEFMT = ['DD.MM.YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
@@ -179,9 +180,9 @@ function cleanFields(list, pages) {
       id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key,
       type, hidden: type !== 'static' && !!f.hidden, required: type !== 'static' && !f.hidden && !!f.required,
       page: Math.round(num(f.page, 1, 1, pages)), x: +num(f.x, 50, -5000, 5000).toFixed(1), y: +num(f.y, 50, -5000, 5000).toFixed(1),
-      size: num(f.size, 11, 4, 72), maxWidth: type === 'image' ? (num(f.maxWidth, 0, 0, 5000) > 0 ? num(f.maxWidth, 0, 5, 5000) : 120) : num(f.maxWidth, 0, 0, 5000), // images: always an explicit width, at least 5 pt
+      size: num(f.size, 11, 4, 72), maxWidth: IMG(type) ? (num(f.maxWidth, 0, 0, 5000) > 0 ? num(f.maxWidth, 0, 5, 5000) : type === 'signature' ? 160 : 120) : num(f.maxWidth, 0, 0, 5000), // images: always an explicit width, at least 5 pt
       height: num(f.height, 0, 0, 5000), // images only: 0 = follows the image, otherwise the image fits into width x height
-      dateFormat, prefill, value: type === 'date' ? toIso(str(f.value, 40), dateFormat) : type === 'image' ? (IMG_NAME.test(f.value) ? f.value : '') : str(f.value, 2000),
+      dateFormat, prefill, value: type === 'date' ? toIso(str(f.value, 40), dateFormat) : IMG(type) ? (IMG_NAME.test(f.value) ? f.value : '') : str(f.value, 2000),
     };
   });
 }
@@ -227,7 +228,7 @@ async function renderPdf(doc, fields, values, rotation = doc.rotation, preview =
   const pages = pdf.getPages();
   for (const f of fields) {
     const page = pages[f.page - 1]; if (!page) continue;
-    if (f.type === 'image') {
+    if (IMG(f.type)) {
       const w = f.maxWidth > 0 ? f.maxWidth : 120, rot = degrees(page.getRotation().angle);
       const buf = imageFromValue(f, values[f.key]);
       if (!buf) { // the editor preview shows where a user-supplied image will land and how large it prints
@@ -358,7 +359,7 @@ async function route(req, res) {
     return json(res, 200, { title: db.settings.siteTitle, docs: db.docs.filter((d) => d.listed).map((d) => ({ slug: d.slug, title: d.title, description: d.description, tags: d.tags, protected: !!d.password })) });
   if (m === 'GET' && (a = /^\/api\/d\/([\w-]+)\/image\/([\w-]+)$/.exec(p))) { // default image of an image field
     const doc = db.docs.find((d) => d.slug === a[1]), f = doc && doc.fields.find((x) => x.key === a[2]);
-    if (!f || f.type !== 'image' || f.prefill !== 'instance' || !f.value || !fs.existsSync(path.join(IMAGES, f.value))) throw new HttpErr(404, 'No image');
+    if (!f || !IMG(f.type) || f.prefill !== 'instance' || !f.value || !fs.existsSync(path.join(IMAGES, f.value))) throw new HttpErr(404, 'No image');
     if (!hasAccess(doc, req)) throw new HttpErr(401, 'Password required');
     return sendImage(res, f.value);
   }
@@ -378,7 +379,7 @@ async function route(req, res) {
       const pdf = await renderPdf(doc, doc.fields, values);
       if (a[2] === '/render') return send(res, 200, pdf, 'application/pdf');
       if (!publicDoc(doc, req).serverPrint) throw new HttpErr(403, 'Printing from the server is not enabled');
-      const miss = doc.fields.find((f) => f.required && !f.hidden && !values[f.key] && !(f.type === 'image' && f.prefill === 'instance' && f.value)); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
+      const miss = doc.fields.find((f) => f.required && !f.hidden && !values[f.key] && !(IMG(f.type) && f.prefill === 'instance' && f.value)); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
       return json(res, 200, await ippPrint(pdf, Math.round(num(body.copies, 1, 1, 20)), doc.title));
     }
   }
@@ -458,7 +459,7 @@ async function route(req, res) {
       }
       if (m === 'DELETE') {
         db.docs = db.docs.filter((d) => d !== doc); save(); fs.rmSync(pdfPath(doc.id), { force: true });
-        for (const f of doc.fields) if (f.type === 'image' && f.value) fs.rmSync(path.join(IMAGES, f.value), { force: true });
+        for (const f of doc.fields) if (IMG(f.type) && f.value) fs.rmSync(path.join(IMAGES, f.value), { force: true });
         return json(res, 200, { ok: true });
       }
     }
@@ -511,7 +512,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, migrate, fails, pruneFails, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, migrate, fails, pruneFails, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -562,6 +563,9 @@ button.small{padding:6px 11px;font-size:13px}
 .skel{width:min(100%,560px);aspect-ratio:1/1.414;border-radius:3px;background:linear-gradient(100deg,var(--card) 30%,var(--line) 50%,var(--card) 70%);background-size:200% 100%;animation:shimmer 1.2s linear infinite}
 @keyframes shimmer{to{background-position:-200% 0}}
 .hint{font-size:12px;color:var(--mut);margin-top:4px}
+.sigdlg{border:1px solid var(--line);border-radius:var(--r);padding:20px;background:var(--card);color:var(--ink);box-shadow:var(--sh2);max-width:calc(100vw - 32px)}
+.sigdlg::backdrop{background:rgba(16,18,24,.45)}.sigdlg h2{margin:0 0 10px}
+canvas.sig{display:block;background:#fff;border:1px dashed var(--line2);border-radius:8px;touch-action:none;cursor:crosshair;max-width:100%}
 .imgbox{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.thumb{max-width:180px;max-height:90px;padding:4px;background:#fff;border:1px solid var(--line2);border-radius:6px}
 .actions{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .empty{padding:36px 20px;text-align:center;color:var(--mut);border:1px dashed var(--line2);border-radius:var(--r)}.empty.small{padding:18px 14px}
@@ -703,13 +707,14 @@ async function formView() {
   const fromUrl = new URLSearchParams(location.search);
   new URLSearchParams(location.hash.slice(1)).forEach((v, k) => fromUrl.set(k, v));
   const LS = 'stampfill:';
+  const IMG = t => t === 'image' || t === 'signature';
   const store = {
     get(k) { try { return localStorage.getItem(LS + k); } catch (e) { return null; } },
     set(k, v) { try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, v); } catch (e) {} },
   };
   const inputs = {}, rows = {};
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
-  const put = (f, v) => { if (f.type === 'image') inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
+  const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
   const HINT = { browser: 'Remembered in this browser', url: 'Can be carried in a link', instance: '', today: "Today's date" };
   const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
@@ -717,7 +722,7 @@ async function formView() {
 
   const form = h('div', { class: 'panel' });
   for (const f of doc.fields) {
-    if (f.type === 'image') { form.append(rows[f.key] = imageRow(f)); continue; }
+    if (IMG(f.type)) { form.append(rows[f.key] = imageRow(f)); continue; }
     const inp = inputs[f.key] = f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : f.type === 'date' ? 'date' : 'text' });
     inp.id = 'f_' + f.key;
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
@@ -737,13 +742,49 @@ async function formView() {
     const st = inputs[f.key] = { value: '' };
     const thumb = h('img', { class: 'thumb', alt: '' }), file = h('input', { type: 'file', accept: 'image/png,image/jpeg', id: 'f_' + f.key, style: 'display:none' });
     const pick = h('button', { class: 'small', onclick: () => file.click() }), clear = h('button', { class: 'small', onclick: () => { st.set(''); changed(); } }, 'Remove');
+    const draw = f.type === 'signature' && h('button', { class: 'small', onclick: () => sigPad(v => { st.set(v); changed(); }) }, 'Draw signature');
     const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? 'Replace image' : 'Choose image'; };
     st.set = v => { st.value = v || ''; show(); };
     const changed = () => { if (f.prefill === 'browser') store.set(f.key, st.value); rows[f.key].classList.remove('bad'); schedule(); };
     file.addEventListener('change', async () => { const fl = file.files[0]; file.value = ''; if (!fl) return; try { st.set(await imageData(fl, 1200)); changed(); } catch (e) { fail(e); } });
     st.set(f.prefill === 'browser' ? store.get(f.key) : '');
     const hint = f.prefill === 'instance' && f.value ? 'A default image is provided; you can replace it' : HINT[f.prefill];
-    return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, pick, clear, file)), hint && h('div', { class: 'hint' }, hint));
+    return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, draw, pick, clear, file)), hint && h('div', { class: 'hint' }, hint));
+  }
+  // a drawing pad for signatures: pointer and touch, smoothed strokes, trimmed to the ink with a transparent background
+  function sigPad(done) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3), W = Math.min(640, window.innerWidth - 72), H = Math.round(W * 0.38);
+    const c = h('canvas', { class: 'sig', width: Math.round(W * dpr), height: Math.round(H * dpr), style: 'width:' + W + 'px;height:' + H + 'px' });
+    const g = c.getContext('2d'); g.scale(dpr, dpr); g.lineWidth = 2.6; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = g.fillStyle = '#1b2a6b';
+    let strokes = [], cur = null;
+    const pos = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    const redraw = () => {
+      g.clearRect(0, 0, W, H);
+      for (const s of strokes) {
+        if (s.length < 3) { g.beginPath(); g.arc(s[0][0], s[0][1], 1.4, 0, 7); g.fill(); continue; }
+        g.beginPath(); g.moveTo(s[0][0], s[0][1]);
+        for (let i = 1; i < s.length - 1; i++) g.quadraticCurveTo(s[i][0], s[i][1], (s[i][0] + s[i + 1][0]) / 2, (s[i][1] + s[i + 1][1]) / 2);
+        g.lineTo(s[s.length - 1][0], s[s.length - 1][1]); g.stroke();
+      }
+    };
+    c.addEventListener('pointerdown', e => { e.preventDefault(); c.setPointerCapture(e.pointerId); cur = [pos(e)]; strokes.push(cur); redraw(); });
+    c.addEventListener('pointermove', e => { if (!cur) return; cur.push(pos(e)); redraw(); });
+    const end = () => { cur = null; }; c.addEventListener('pointerup', end); c.addEventListener('pointercancel', end);
+    const crop = () => { // bounding box of the ink, plus a margin
+      const d = g.getImageData(0, 0, c.width, c.height).data; let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0) return null;
+      const pad = Math.round(8 * dpr), o = document.createElement('canvas'); o.width = x1 - x0 + 1 + 2 * pad; o.height = y1 - y0 + 1 + 2 * pad;
+      o.getContext('2d').drawImage(c, x0 - pad, y0 - pad, o.width, o.height, 0, 0, o.width, o.height);
+      return o.toDataURL('image/png');
+    };
+    const dlg = h('dialog', { class: 'sigdlg' }, h('h2', {}, 'Sign here'), c,
+      h('div', { class: 'row', style: 'margin-top:12px' },
+        h('button', { class: 'small', onclick: () => { strokes = []; redraw(); } }, 'Clear'), h('button', { class: 'small', onclick: () => { strokes.pop(); redraw(); } }, 'Undo'), h('span', { class: 'grow' }),
+        h('button', { onclick: () => dlg.close() }, 'Cancel'),
+        h('button', { class: 'pri', onclick: () => { const out = crop(); if (!out) { toast('Nothing drawn yet', true); return; } dlg.close(); done(out); } }, 'Use signature')));
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.append(dlg); dlg.showModal();
   }
 
   const pv = h('div', { class: 'preview' }, h('div', { class: 'skel' }));
@@ -761,7 +802,7 @@ async function formView() {
   }
   function schedule() { clearTimeout(timer); timer = setTimeout(() => refresh().catch(fail), 200); }
   function complete() {
-    const miss = doc.fields.filter(f => f.required && !f.hidden && !get(f) && !(f.type === 'image' && f.prefill === 'instance' && f.value));
+    const miss = doc.fields.filter(f => f.required && !f.hidden && !get(f) && !(IMG(f.type) && f.prefill === 'instance' && f.value));
     miss.forEach(f => rows[f.key].classList.add('bad'));
     if (miss.length) { toast('Please fill in: ' + miss.map(f => f.label).join(', '), true); inputs[miss[0].key].focus(); }
     return !miss.length;
@@ -837,10 +878,11 @@ async function formView() {
 const ADMIN_HTML = page('Forms admin', '<header><a href="/admin" id="home">' + LOGO_SVG + '<span id="homeT">Forms admin</span></a><span class="sp"></span><span id="nav" class="row"></span></header>', String.raw`
 const app = $('#app');
 let me = null, dirty = false, lastHash = location.hash;
-const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)', image: 'Image (e.g. signature)', static: 'Fixed text (not editable)' };
+const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)', image: 'Image (upload)', signature: 'Signature (draw or upload)', static: 'Fixed text (not editable)' };
+const IMG = t => t === 'image' || t === 'signature';
 const PRE = { none: 'No prefill', browser: 'Remember per user (browser)', instance: 'Fixed value (this instance)', url: 'From link (URL)', today: "Today's date" };
 const PRE_SHORT = { none: '', browser: 'browser', instance: 'fixed', url: 'link', today: 'today' };
-const preFor = type => Object.fromEntries(Object.entries(PRE).filter(([k]) => (k !== 'today' || type === 'date') && (k !== 'url' || type !== 'image')));
+const preFor = type => Object.fromEntries(Object.entries(PRE).filter(([k]) => (k !== 'today' || type === 'date') && (k !== 'url' || !IMG(type))));
 const DATEFMT = ['YYYY-MM-DD', 'DD.MM.YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY']; // first entry: default for new fields (the server keeps DD.MM.YYYY for stored fields without a format)
 const keyOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 const linkOf = d => location.origin + '/d/' + d.slug;
@@ -951,14 +993,14 @@ async function editView(id) {
   const later = () => { clearTimeout(timer); timer = setTimeout(() => redraw().catch(fail), 200); };
   const aspects = {}; // default image name -> width/height, so the marker shows the printed shape
   function aspectOf(f) {
-    if (f.type !== 'image' || !f.value) return 2;
+    if (!IMG(f.type) || !f.value) return f.type === 'signature' ? 3.2 : 2;
     if (aspects[f.value] === undefined) { aspects[f.value] = 2; const im = new Image(); im.onload = () => { aspects[f.value] = im.naturalWidth / im.naturalHeight; markers(); }; im.src = '/api/admin/images/' + f.value; }
     return aspects[f.value];
   }
   function markers() {
     if (!vp) return;
     ov.replaceChildren(...d.fields.filter(f => f.page === pageNo).map(f => {
-      const pt = vp.convertToViewportPoint(f.x, f.y), fh = f.size * vp.scale, img = f.type === 'image';
+      const pt = vp.convertToViewportPoint(f.x, f.y), fh = f.size * vp.scale, img = IMG(f.type);
       const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '0000-00-00' : (f.value || f.label).split('\n')[0];
       const w = img ? (f.maxWidth || 120) * vp.scale : (f.maxWidth > 0 ? f.maxWidth : Math.max(f.size, sample.length * f.size * 0.52)) * vp.scale;
       const hgt = img ? (f.height > 0 ? f.height * vp.scale : w / aspectOf(f)) : fh * 1.1, top = img ? pt[1] - hgt : pt[1] - fh * 0.85; // images grow upwards from (x, y)
@@ -973,7 +1015,7 @@ async function editView(id) {
   }
   function resize(e, f, m) {
     e.preventDefault(); e.stopPropagation();
-    const img = f.type === 'image', sx = e.clientX, sy = e.clientY, s = vp.scale;
+    const img = IMG(f.type), sx = e.clientX, sy = e.clientY, s = vp.scale;
     const w0 = f.maxWidth > 0 ? f.maxWidth : parseFloat(m.style.width) / s, h0 = f.height > 0 ? f.height : parseFloat(m.style.height) / s, pt = vp.convertToViewportPoint(f.x, f.y);
     const move = ev => {
       f.maxWidth = Math.max(5, Math.round((w0 + (ev.clientX - sx) / s) * 10) / 10); m.style.width = f.maxWidth * s + 'px';
@@ -1051,13 +1093,13 @@ async function editView(id) {
     labelIn.addEventListener('input', () => { const auto = f.key === keyOf(f.label); f.label = labelIn.value; if (auto) { f.key = keyOf(f.label); keyIn.value = f.key; } mark(); later(); flist(); });
     const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => {
       const was = f[prop]; f[prop] = s.value;
-      if (prop === 'type' && (was === 'image' || s.value === 'image')) { f.value = ''; f.maxWidth = s.value === 'image' ? 120 : 0; f.height = 0; } // sizes mean different things per type
-      if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.prefill === 'url' && f.type === 'image') f.prefill = 'none';
+      if (prop === 'type' && (IMG(was) || IMG(s.value))) { f.value = ''; f.maxWidth = s.value === 'signature' ? 160 : IMG(s.value) ? 120 : 0; f.height = s.value === 'signature' ? 50 : 0; } // sizes mean different things per type
+      if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.prefill === 'url' && IMG(f.type)) f.prefill = 'none';
       if (prop === 'prefill' && (was === 'instance') !== (s.value === 'instance')) f.hidden = s.value === 'instance'; // fixed values are hidden on the form by default
       if (f.type === 'static') { f.prefill = 'none'; f.required = false; f.hidden = false; }
       if (f.hidden) f.required = false;
       mark(); side(); redraw().catch(fail); }); return s; };
-    const fixed = f.type === 'static', isImg = f.type === 'image';
+    const fixed = f.type === 'static', isImg = IMG(f.type);
     const imgPick = h('input', { type: 'file', accept: 'image/png,image/jpeg', style: 'display:none', onchange: async () => {
       const fl = imgPick.files[0]; imgPick.value = ''; if (!fl) return;
       try { const r = await api('POST', '/api/admin/images', fl); f.value = r.name; mark(); side(); redraw().catch(fail); } catch (e) { fail(e); }
@@ -1076,7 +1118,7 @@ async function editView(id) {
       f.prefill === 'instance' && isImg && h('div', {}, h('label', {}, 'Default image (PNG or JPEG)'),
         h('div', { class: 'imgbox' }, f.value && h('img', { class: 'thumb', alt: '', src: '/api/admin/images/' + f.value }), h('button', { class: 'small', onclick: () => imgPick.click() }, f.value ? 'Replace image' : 'Upload image'), imgPick),
         h('div', { class: 'hint' }, 'Printed unless the user picks another image on the form. For an image nobody should replace, put it into the PDF template itself.')),
-      f.prefill === 'browser' && isImg && h('div', { class: 'hint' }, 'Good for signatures: each user picks their image once and the browser remembers it for every document that has a field with this key.'),
+      f.prefill === 'browser' && isImg && h('div', { class: 'hint' }, (f.type === 'signature' ? 'Users draw on screen or upload a picture; ' : 'Users pick their image once; ') + 'the browser remembers it for every document that has a field with this key.'),
       f.prefill === 'browser' && !isImg && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
       f.prefill === 'url' && h('div', { class: 'hint' }, 'Filled from the link, e.g. ' + linkOf(d) + '#' + f.key + '=value. Users get a "Copy link with values" button.'),
       f.prefill === 'today' && h('div', { class: 'hint' }, 'Set to the current date when the form opens. The user can still change it.'),

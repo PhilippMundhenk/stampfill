@@ -33,8 +33,9 @@ The screenshots come from a demo instance that `npm run screenshots` builds from
 - **Prefill** per field: remembered in the user's browser, fixed for this instance, carried in
   the link (`/d/<link>#key=value`), or today's date for date fields. Users get a "Copy link with
   values" button.
-- **Images**: an image field takes a PNG or JPEG from the user, scaled down in the browser, and
-  stamps it at the chosen width. With browser prefill each user picks their signature once and the
+- **Signatures and images**: a signature field opens a drawing pad (touch or mouse) or takes an
+  uploaded picture; an image field takes a PNG or JPEG. Pictures are scaled down in the browser
+  and stamped into the field's box. With browser prefill each user picks their signature once and the
   browser remembers it; the admin can also upload a default image (a stamp, a logo) that users may
   replace. Default images live in `DATA_DIR/images`.
 - **Fixed text**: blocks the admin writes once (a footer note, an office address) that are printed

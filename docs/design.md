@@ -56,7 +56,7 @@ one handler; anything else becomes a generic 500 and is logged.
     "serverPrint": true, "password": null | "salt:scrypt-hex",
     "pages": 1, "rotation": [0],  // degrees per page, applied on render
     "fields": [{
-      "id", "key", "label", "type": "text|textarea|date|checkbox|image|static",
+      "id", "key", "label", "type": "text|textarea|date|checkbox|image|signature|static",
       "required", "hidden", "page", "x", "y", "size", "maxWidth", "height",
       "dateFormat", "prefill": "none|browser|instance|url|today", "value"
     }]

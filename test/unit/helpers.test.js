@@ -110,6 +110,13 @@ test('image sizes: explicit width, optional height box, placeholder only in prev
   assert.equal(tj(pub.text), tj((await at(60, 0, data)).text) - 0, 'users never see the placeholder');
 });
 
+test('signature fields are image fields with their own defaults', () => {
+  assert.equal(app.IMG('image'), true); assert.equal(app.IMG('signature'), true); assert.equal(app.IMG('text'), false);
+  const [s, i] = app.cleanFields([{ label: 'Sign', type: 'signature', prefill: 'url', value: 'x.png' }, { label: 'Pic', type: 'image' }], 1);
+  assert.equal(s.type, 'signature'); assert.equal(s.maxWidth, 160); assert.equal(s.prefill, 'none', 'no link prefill for pictures'); assert.equal(s.value, 'x.png');
+  assert.equal(i.maxWidth, 120);
+});
+
 test('image fields: prefill rules, value validation, type sniffing', () => {
   assert.equal(app.cleanPrefill('image', 'url'), 'none'); assert.equal(app.cleanPrefill('image', 'browser'), 'browser');
   assert.equal(app.cleanPrefill('image', 'instance'), 'instance'); assert.equal(app.cleanPrefill('text', 'url'), 'url');
