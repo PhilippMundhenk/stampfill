@@ -302,12 +302,29 @@ test('public printing is limited: 5 copies, 10 jobs per minute per client', asyn
   await call('DELETE', '/api/admin/docs/' + d.id);
 });
 
-test('a server-wide brake stops password guessing even from many addresses', async () => {
-  const now = Date.now(); for (let i = 0; i < 50; i++) app.authFails.push(now);
+test('a server-wide brake stops password guessing even from many addresses, per purpose', async () => {
+  const now = Date.now(); app.authFails.set('login', Array.from({ length: 50 }, () => now));
   const r = await call('POST', '/api/login', { password: 'api-pass-123' }, { 'X-Forwarded-For': '203.0.113.' + Math.floor(Math.random() * 200) });
   assert.equal(r.status, 429); assert.match((await r.json()).error, /on this server/);
-  app.authFails.length = 0;
+  // guessing a form password does not touch the admin login brake and vice versa
+  const locked = await (await call('POST', '/api/admin/docs?title=brake', SAMPLE)).json();
+  await call('PUT', '/api/admin/docs/' + locked.id, { ...locked, password: 'open-sesame' });
+  const u = await fetch(base + '/api/d/' + locked.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'open-sesame' }) });
+  assert.equal(u.status, 200, 'unlocking still works while the login brake is on');
+  app.authFails.clear();
   assert.equal((await call('POST', '/api/login', { password: 'api-pass-123' })).status, 200);
+  await call('DELETE', '/api/admin/docs/' + locked.id);
+});
+
+test('a server-wide render budget answers 429 once everyone together renders too much', async () => {
+  process.env.RENDER_LIMIT_GLOBAL = '3';
+  const d = await (await call('POST', '/api/admin/docs?title=budget', SAMPLE)).json();
+  let last = 200;
+  for (let i = 0; i < 6 && last === 200; i++) last = (await fetch(base + '/api/d/' + d.slug + '/render', { method: 'POST', headers: { ...H, 'X-Forwarded-For': '198.18.0.' + i }, body: JSON.stringify({ values: {} }) })).status;
+  assert.equal(last, 429, 'different addresses share the global budget');
+  assert.equal((await call('POST', '/api/d/' + d.slug + '/render', { values: {} })).status, 200, 'admins are not budgeted');
+  delete process.env.RENDER_LIMIT_GLOBAL;
+  await call('DELETE', '/api/admin/docs/' + d.id);
 });
 
 test('the audit log records admin actions and print jobs without form values', async () => {

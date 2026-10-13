@@ -179,7 +179,6 @@
  "The server is busy — please try again in a moment": "Сервер занят — попробуйте через мгновение",
  "Printing from the server is not enabled": "Печать с сервера не включена",
  "The printer did not accept the job. Please try again later or ask the office.": "Принтер не принял задание. Попробуйте позже или обратитесь в офис.",
- "Image unreadable or too large (at most 16 megapixels)": "Изображение нечитаемо или слишком велико (не более 16 мегапикселей)",
  "Current password is wrong": "Текущий пароль неверен",
  "New password needs at least 8 characters": "Новый пароль должен содержать не менее 8 символов",
  "The form password needs at least 8 characters": "Пароль формы должен содержать не менее 8 символов",
@@ -192,5 +191,6 @@
  "e.g. Applicant, Child, Office use": "например, Заявитель, Ребёнок, Для служебных отметок",
  "Drag to reorder": "Перетащите, чтобы изменить порядок",
  "Move up": "Вверх",
- "Move down": "Вниз"
+ "Move down": "Вниз",
+ "Image unreadable or too large (at most 8 megapixels)": "Изображение нечитаемо или слишком велико (не более 8 мегапикселей)"
 }

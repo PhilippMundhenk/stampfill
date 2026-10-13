@@ -17,6 +17,10 @@ or contact the maintainer directly. You should get a first response within a wee
   audit log. Back it up like a secret and keep it at mode 0700 (the service sets that itself).
 - The CUPS sidecar is in the data path: every printed form goes through it. Keep it unreachable
   from the network (the overlay does not publish it) and set a real `CUPSPASSWORD`.
+- Failed password attempts are counted per purpose and server-wide: 50 failures in five minutes
+  block admin login (or unlocking one document) for everyone for five minutes. An attacker can keep
+  that brake tripped against the admin login; the data stays safe, and the admin can wait it out or
+  stop the flood at the proxy.
 - Use "Sign out all other sessions" in Settings after any suspicion; it invalidates every admin
   session and every unlocked form in every browser.
 - The full review with findings and their status is in [docs/security.md](docs/security.md).

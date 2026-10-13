@@ -179,7 +179,6 @@
  "The server is busy — please try again in a moment": "Ο διακομιστής είναι απασχολημένος — δοκιμάστε ξανά σε λίγο",
  "Printing from the server is not enabled": "Η εκτύπωση από τον διακομιστή δεν είναι ενεργή",
  "The printer did not accept the job. Please try again later or ask the office.": "Ο εκτυπωτής δεν δέχτηκε την εργασία. Δοκιμάστε αργότερα ή ρωτήστε το γραφείο.",
- "Image unreadable or too large (at most 16 megapixels)": "Η εικόνα δεν διαβάζεται ή είναι πολύ μεγάλη (έως 16 megapixel)",
  "Current password is wrong": "Ο τρέχων κωδικός είναι λάθος",
  "New password needs at least 8 characters": "Ο νέος κωδικός χρειάζεται τουλάχιστον 8 χαρακτήρες",
  "The form password needs at least 8 characters": "Ο κωδικός φόρμας χρειάζεται τουλάχιστον 8 χαρακτήρες",
@@ -192,5 +191,6 @@
  "e.g. Applicant, Child, Office use": "π.χ. Αιτών, Παιδί, Για το γραφείο",
  "Drag to reorder": "Σύρετε για αλλαγή σειράς",
  "Move up": "Μετακίνηση πάνω",
- "Move down": "Μετακίνηση κάτω"
+ "Move down": "Μετακίνηση κάτω",
+ "Image unreadable or too large (at most 8 megapixels)": "Η εικόνα δεν διαβάζεται ή είναι πολύ μεγάλη (έως 8 megapixel)"
 }

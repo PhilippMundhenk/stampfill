@@ -179,7 +179,6 @@
  "The server is busy — please try again in a moment": "Sunucu meşgul — lütfen birazdan tekrar deneyin",
  "Printing from the server is not enabled": "Sunucudan yazdırma etkin değil",
  "The printer did not accept the job. Please try again later or ask the office.": "Yazıcı işi kabul etmedi. Lütfen daha sonra tekrar deneyin veya ofise sorun.",
- "Image unreadable or too large (at most 16 megapixels)": "Resim okunamıyor veya çok büyük (en fazla 16 megapiksel)",
  "Current password is wrong": "Mevcut parola yanlış",
  "New password needs at least 8 characters": "Yeni parola en az 8 karakter olmalı",
  "The form password needs at least 8 characters": "Form parolası en az 8 karakter olmalı",
@@ -192,5 +191,6 @@
  "e.g. Applicant, Child, Office use": "örn. Başvuran, Çocuk, Ofis kullanımı",
  "Drag to reorder": "Sıralamak için sürükleyin",
  "Move up": "Yukarı taşı",
- "Move down": "Aşağı taşı"
+ "Move down": "Aşağı taşı",
+ "Image unreadable or too large (at most 8 megapixels)": "Resim okunamıyor veya çok büyük (en fazla 8 megapiksel)"
 }

@@ -143,9 +143,18 @@ test('images are checked for their declared size before anything decodes them', 
   assert.deepEqual(app.imgDims(PNG), [1, 1]);
   assert.deepEqual(app.imgDims(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xc0, 0x00, 0x11, 8, 0x01, 0x2c, 0x02, 0x58, 3])), [600, 300], 'JPEG SOF0 after an APP0 segment');
   assert.equal(app.imgDims(Buffer.from('GIF89a')), null);
-  assert.equal(app.checkImage(pngHeader(4000, 4000)).length, 33);
+  assert.equal(app.checkImage(pngHeader(2000, 2000)).length, 33);
   assert.throws(() => app.checkImage(pngHeader(20000, 20000)), /too large/);
   assert.throws(() => app.checkImage(pngHeader(0, 100)), /unreadable/);
+  // chunk games: a second IHDR later in the file, or something before the IHDR, must not slip past the gate
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0); return Buffer.concat([len, Buffer.from(type), data, Buffer.alloc(4)]); };
+  const ihdr = (w, h) => { const d = Buffer.alloc(13); d.writeUInt32BE(w, 0); d.writeUInt32BE(h, 4); d[8] = 8; d[9] = 6; return chunk('IHDR', d); };
+  const sig = PNG.subarray(0, 8);
+  assert.throws(() => app.checkImage(Buffer.concat([sig, ihdr(10, 10), chunk('tEXt', Buffer.from('x')), ihdr(30000, 30000), chunk('IEND', Buffer.alloc(0))])), /unreadable/, 'two IHDR chunks');
+  assert.throws(() => app.checkImage(Buffer.concat([sig, chunk('tEXt', Buffer.from('x')), ihdr(10, 10)])), /unreadable/, 'IHDR not first');
+  assert.throws(() => app.checkImage(Buffer.concat([sig, chunk('IHDR', Buffer.alloc(20))])), /unreadable/, 'wrong IHDR length');
+  assert.deepEqual(app.imgDims(Buffer.concat([sig, ihdr(640, 480), chunk('IDAT', Buffer.alloc(3)), chunk('IEND', Buffer.alloc(0))])), [640, 480], 'a well-formed file');
+  assert.equal(app.imgDims(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]), ihdr(1, 1), chunk('IEND', Buffer.alloc(0))])), null, 'broken signature');
   fs.mkdirSync(path.join(tmp, 'pdfs'), { recursive: true }); fs.copyFileSync(SAMPLE, path.join(tmp, 'pdfs', 'bomb.pdf'));
   const f = app.cleanFields([{ label: 'Sig', type: 'image', x: 10, y: 10 }], 1);
   await assert.rejects(app.renderPdf({ id: 'bomb' }, f, { sig: 'data:image/png;base64,' + pngHeader(30000, 30000).toString('base64') }), /too large/);
@@ -267,6 +276,16 @@ test('renderPdf uses DATA_DIR/font.ttf when present', async () => {
 
 test('ippPrint needs a configured printer', async () => {
   await assert.rejects(app.ippPrint(Buffer.from('%PDF-'), 1, 'x'), /No printer is configured/);
+});
+
+test('the audit log rotates once it grows past its limit', () => {
+  fs.rmSync(app.AUDIT, { force: true }); fs.rmSync(app.AUDIT + '.1', { force: true });
+  fs.writeFileSync(app.AUDIT, Buffer.alloc(app.AUDIT_MAX + 1, 32));
+  app.audit(null, 'test.event', { n: 1 });
+  assert.ok(fs.existsSync(app.AUDIT + '.1'), 'the full log was rotated away');
+  assert.ok(fs.statSync(app.AUDIT).size < 200, 'the new log holds just the latest line');
+  assert.match(fs.readFileSync(app.AUDIT, 'utf8'), /"event":"test.event"/);
+  fs.rmSync(app.AUDIT, { force: true }); fs.rmSync(app.AUDIT + '.1', { force: true });
 });
 
 test('pruneFails keeps the login rate-limit table bounded', () => {

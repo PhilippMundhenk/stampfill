@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- Second review: PNG size check walks the chunks (a later IHDR no longer slips past), 8-megapixel
+  limit; render budget of 60/minute per client and 300/minute server-wide; password brakes per
+  purpose; expired browser values swept on every form open; audit log rotation at 10 MB; tighter
+  systemd sandbox.
 - Findings of the security review (docs/security.md) addressed: proxy-header handling and a
   server-wide brake on password guessing; image size gate against decompression bombs; rate
   limits and a concurrency cap on public rendering and printing, async scrypt; CUPS sidecar no

@@ -32,6 +32,14 @@ LockPersonality=true
 MemoryDenyWriteExecute=false
 CapabilityBoundingSet=
 AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelLogs=true
 
 [Install]
 WantedBy=multi-user.target

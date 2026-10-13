@@ -132,6 +132,32 @@ An append-only `audit.log` in the data directory records logins, settings change
 creation and deletion, password changes and print jobs with time and client address, never form
 values.
 
+## Second review (2026-10-14)
+
+A second, adversarial pass re-verified every fix above against the code and with live probes, and
+found the following. All are addressed on `main`.
+
+| # | Finding | Severity | Issue |
+| --- | --- | --- | --- |
+| 19 | The PNG size gate read the header at a fixed offset while the decoder honours any IHDR chunk, so a file with a harmless first header and a huge second one still inflated | high | #50 |
+| 20 | One render can cost most of a second on a large template; 120 renders per minute from one address, or a few addresses together, could keep the single thread busy | medium | #51 |
+| 21 | The server-wide brake on failed passwords was shared by admin login and form unlocks, so guessing a form password could lock the admin out, and vice versa | medium | #52 |
+| 22 | Remembered values in the browser only expired when a form with the same key was opened again | low | #53 |
+| 23 | `audit.log` grew without bound and holds client addresses | low | #54 |
+| 24 | Compose pulls `:latest`, so an operator's `docker compose pull` takes whatever `main` last built | info | #55 |
+
+Fixes: the PNG check now walks the chunks and requires exactly one IHDR as the first chunk, with the
+limit lowered to 8 megapixels (#50). Renders are limited to 60 per minute per client and 300 per
+minute for the whole server (`RENDER_LIMIT_GLOBAL`), on top of the concurrency cap (#51). The brake
+is kept per purpose: one for admin login, one per document for unlocks (#52). The form sweeps all
+expired remembered values on every open (#53). The audit log rotates at 10 MB to `audit.log.1`; it
+contains client addresses, so operators subject to data-protection rules should archive or delete it
+on their own schedule (#54). Releases now carry version tags and the Compose file can pin one (#55).
+
+The re-verification confirmed every first-round fix as effective except the PNG gate (#19 above)
+and noted that `X-Forwarded-Proto` is honoured without `TRUST_PROXY`, which only affects the
+requesting client's own cookie flags and is harmless.
+
 ## What was found to be sound
 
 - No injection of any kind: the DOM is built with `textContent`, routes are regex-anchored,

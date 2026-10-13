@@ -179,7 +179,6 @@
  "The server is busy — please try again in a moment": "Сервер зайнятий — спробуйте за мить",
  "Printing from the server is not enabled": "Друк із сервера не ввімкнено",
  "The printer did not accept the job. Please try again later or ask the office.": "Принтер не прийняв завдання. Спробуйте пізніше або зверніться до офісу.",
- "Image unreadable or too large (at most 16 megapixels)": "Зображення нечитабельне або завелике (не більше 16 мегапікселів)",
  "Current password is wrong": "Поточний пароль неправильний",
  "New password needs at least 8 characters": "Новий пароль має містити щонайменше 8 символів",
  "The form password needs at least 8 characters": "Пароль форми має містити щонайменше 8 символів",
@@ -192,5 +191,6 @@
  "e.g. Applicant, Child, Office use": "наприклад, Заявник, Дитина, Для службових відміток",
  "Drag to reorder": "Перетягніть, щоб змінити порядок",
  "Move up": "Вгору",
- "Move down": "Вниз"
+ "Move down": "Вниз",
+ "Image unreadable or too large (at most 8 megapixels)": "Зображення нечитабельне або завелике (не більше 8 мегапікселів)"
 }

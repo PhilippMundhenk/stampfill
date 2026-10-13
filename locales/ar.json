@@ -179,7 +179,6 @@
  "The server is busy — please try again in a moment": "الخادم مشغول — يرجى المحاولة بعد لحظات",
  "Printing from the server is not enabled": "الطباعة من الخادم غير مفعّلة",
  "The printer did not accept the job. Please try again later or ask the office.": "لم تقبل الطابعة المهمة. يرجى المحاولة لاحقًا أو مراجعة المكتب.",
- "Image unreadable or too large (at most 16 megapixels)": "الصورة غير قابلة للقراءة أو كبيرة جدًا (16 ميغابكسل كحد أقصى)",
  "Current password is wrong": "كلمة المرور الحالية خاطئة",
  "New password needs at least 8 characters": "كلمة المرور الجديدة تحتاج إلى 8 أحرف على الأقل",
  "The form password needs at least 8 characters": "كلمة مرور النموذج تحتاج إلى 8 أحرف على الأقل",
@@ -192,5 +191,6 @@
  "e.g. Applicant, Child, Office use": "مثلًا مقدم الطلب، الطفل، لاستخدام المكتب",
  "Drag to reorder": "اسحب لإعادة الترتيب",
  "Move up": "نقل لأعلى",
- "Move down": "نقل لأسفل"
+ "Move down": "نقل لأسفل",
+ "Image unreadable or too large (at most 8 megapixels)": "الصورة غير قابلة للقراءة أو كبيرة جدًا (8 ميغابكسل كحد أقصى)"
 }

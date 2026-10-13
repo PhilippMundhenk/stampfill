@@ -179,7 +179,6 @@
  "The server is busy — please try again in a moment": "Der Server ist ausgelastet – bitte gleich noch einmal versuchen",
  "Printing from the server is not enabled": "Drucken vom Server ist nicht aktiviert",
  "The printer did not accept the job. Please try again later or ask the office.": "Der Drucker hat den Auftrag nicht angenommen. Bitte später erneut versuchen oder im Büro nachfragen.",
- "Image unreadable or too large (at most 16 megapixels)": "Bild nicht lesbar oder zu groß (höchstens 16 Megapixel)",
  "Current password is wrong": "Das aktuelle Passwort ist falsch",
  "New password needs at least 8 characters": "Das neue Passwort braucht mindestens 8 Zeichen",
  "The form password needs at least 8 characters": "Das Formular-Passwort braucht mindestens 8 Zeichen",
@@ -192,5 +191,6 @@
  "e.g. Applicant, Child, Office use": "z. B. Antragsteller, Kind, Nur für das Büro",
  "Drag to reorder": "Ziehen, um die Reihenfolge zu ändern",
  "Move up": "Nach oben",
- "Move down": "Nach unten"
+ "Move down": "Nach unten",
+ "Image unreadable or too large (at most 8 megapixels)": "Bild nicht lesbar oder zu groß (höchstens 8 Megapixel)"
 }

@@ -67,8 +67,12 @@ let db = { secret: rid(32), auth: null, settings: { ...DEFAULTS }, docs: [] };
 if (fs.existsSync(DBF)) { const l = JSON.parse(fs.readFileSync(DBF, 'utf8')); db = Object.assign(db, l, { settings: { ...DEFAULTS, ...(l.settings || {}) } }); }
 const save = () => { fs.writeFileSync(DBF + '.tmp', JSON.stringify(db, null, 1), { mode: 0o600 }); fs.renameSync(DBF + '.tmp', DBF); };
 const AUDIT = path.join(DATA, 'audit.log'); // append-only record of admin actions and print jobs; never contains form values
+const AUDIT_MAX = 10 * 1024 * 1024; // one rotation (audit.log.1) keeps the file bounded; the host can archive it
 function audit(req, event, detail) {
-  try { fs.appendFileSync(AUDIT, JSON.stringify({ t: new Date().toISOString(), ip: req ? clientIp(req) : null, event, ...detail }) + '\n', { mode: 0o600 }); } catch (e) { console.error('audit log: ' + e.message); }
+  try {
+    try { if (fs.statSync(AUDIT).size > AUDIT_MAX) fs.renameSync(AUDIT, AUDIT + '.1'); } catch (e) { /* no log yet */ }
+    fs.appendFileSync(AUDIT, JSON.stringify({ t: new Date().toISOString(), ip: req ? clientIp(req) : null, event, ...detail }) + '\n', { mode: 0o600 });
+  } catch (e) { console.error('audit log: ' + e.message); }
 }
 const pdfPath = (id) => path.join(PDFS, id + '.pdf');
 
@@ -103,14 +107,18 @@ function hasAccess(doc, req) {
   const m = /^(\d+)\.([\w-]+)$/.exec(cookies(req)['sf_u_' + doc.id] || '');
   return !!m && +m[1] > Date.now() && sameStr(m[2], docSign(doc, m[1]));
 }
-const authFails = []; // timestamps of failed login/unlock attempts from every client: a server-wide brake that address spoofing cannot bypass
-function checkFails(req) {
-  const now = Date.now(); while (authFails.length && authFails[0] < now - 5 * 60000) authFails.shift();
-  if (authFails.length >= 50) throw new HttpErr(429, 'Too many failed attempts on this server — try again in a few minutes');
+// server-wide brakes that address spoofing cannot bypass: 50 failures in 5 minutes block that purpose for everyone.
+// One per purpose ("login" for the admin, one per document for unlocks), so guessing a form password cannot lock the admin out.
+const authFails = new Map(); // purpose -> timestamps of failed attempts
+function checkFails(req, purpose = 'login') {
+  const now = Date.now(), list = authFails.get(purpose) || [];
+  while (list.length && list[0] < now - 5 * 60000) list.shift();
+  if (list.length >= 50) throw new HttpErr(429, 'Too many failed attempts on this server — try again in a few minutes');
   const f = fails.get(clientIp(req)); if (f && f.until > now) throw new HttpErr(429, 'Too many attempts — try again in a few minutes');
 }
-async function noteFail(req) {
-  authFails.push(Date.now());
+async function noteFail(req, purpose = 'login') {
+  const list = authFails.get(purpose) || []; list.push(Date.now()); authFails.set(purpose, list);
+  if (authFails.size > 1000) for (const [k, v] of authFails) if (!v.length || v[v.length - 1] < Date.now() - 5 * 60000) authFails.delete(k);
   pruneFails(); const ip = clientIp(req), f = fails.get(ip), n = (f ? f.n : 0) + 1;
   fails.set(ip, { n, until: n >= 5 ? Date.now() + 5 * 60000 : 0, at: Date.now() });
   await new Promise((r) => setTimeout(r, 400));
@@ -186,7 +194,19 @@ function cleanPrefill(type, p) {
 const IMG_NAME = /^[\w-]+\.(png|jpg)$/;
 const imgType = (b) => b.length > 4 && b[0] === 0x89 && b[1] === 0x50 ? 'png' : b.length > 3 && b[0] === 0xff && b[1] === 0xd8 ? 'jpg' : null;
 function imgDims(b) { // [width, height] from the PNG IHDR or the first JPEG SOF marker, without decoding anything
-  if (imgType(b) === 'png') return b.length >= 24 ? [b.readUInt32BE(16), b.readUInt32BE(20)] : null;
+  if (imgType(b) === 'png') { // walk the chunks: the first must be the only IHDR, since the decoder would honour a later one
+    if (b.length < 33 || b.toString('latin1', 1, 8) !== 'PNG\r\n\x1a\n') return null;
+    let o = 8, dims = null, ihdr = 0;
+    while (o + 12 <= b.length) {
+      const len = b.readUInt32BE(o), type = b.toString('latin1', o + 4, o + 8);
+      if (type === 'IHDR') { ihdr++; if (o !== 8 || len !== 13 || ihdr > 1) return null; dims = [b.readUInt32BE(o + 8), b.readUInt32BE(o + 12)]; }
+      else if (o === 8) return null; // IHDR must come first
+      if (type === 'IEND') break;
+      if (len > b.length) return null;
+      o += 12 + len;
+    }
+    return ihdr === 1 ? dims : null;
+  }
   let o = 2;
   while (o + 9 < b.length) {
     if (b[o] !== 0xff) return null;
@@ -196,10 +216,10 @@ function imgDims(b) { // [width, height] from the PNG IHDR or the first JPEG SOF
   }
   return null;
 }
-const MAX_PIXELS = 16e6;
+const MAX_PIXELS = 8e6; // the browser sends at most 1200 px on the longer side; default images are small
 function checkImage(b) { // a decompression bomb declares huge dimensions in a tiny file; refuse before pdf-lib inflates it
   const d = imgDims(b);
-  if (!d || !d[0] || !d[1] || d[0] > 20000 || d[1] > 20000 || d[0] * d[1] > MAX_PIXELS) throw new HttpErr(400, 'Image unreadable or too large (at most 16 megapixels)');
+  if (!d || !d[0] || !d[1] || d[0] > 20000 || d[1] > 20000 || d[0] * d[1] > MAX_PIXELS) throw new HttpErr(400, 'Image unreadable or too large (at most 8 megapixels)');
   return b;
 }
 function imageFromValue(f, v) { // the image sent with the form wins, else the admin's default image
@@ -449,9 +469,9 @@ async function route(req, res) {
   if ((a = /^\/api\/d\/([\w-]+)(\/render|\/print|\/unlock)?$/.exec(p))) {
     const doc = db.docs.find((d) => d.slug === a[1]); if (!doc) throw new HttpErr(404, 'Document not found');
     if (a[2] === '/unlock' && m === 'POST') {
-      rateLimit(req, 'auth', 20); checkFails(req);
+      rateLimit(req, 'auth', 20); checkFails(req, 'unlock:' + doc.id);
       const body = await readJson(req, 1e4);
-      if (!doc.password || typeof body.password !== 'string' || !sameStr(await hashPwAsync(body.password, doc.password.split(':')[0]), doc.password)) { await noteFail(req); audit(req, 'unlock.fail', { doc: doc.id }); throw new HttpErr(401, 'Wrong password'); }
+      if (!doc.password || typeof body.password !== 'string' || !sameStr(await hashPwAsync(body.password, doc.password.split(':')[0]), doc.password)) { await noteFail(req, 'unlock:' + doc.id); audit(req, 'unlock.fail', { doc: doc.id }); throw new HttpErr(401, 'Wrong password'); }
       fails.delete(clientIp(req));
       const exp = Date.now() + UNLOCK_MS;
       return json(res, 200, { ok: true }, { 'Set-Cookie': 'sf_u_' + doc.id + '=' + exp + '.' + docSign(doc, exp) + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + UNLOCK_MS / 1000 + (secure(req) ? '; Secure' : '') });
@@ -460,7 +480,7 @@ async function route(req, res) {
     if (m === 'GET' && !a[2]) return json(res, 200, publicDoc(doc, req));
     if (m === 'POST' && a[2]) {
       const admin = isAdmin(req);
-      if (!admin) rateLimit(req, a[2] === '/print' ? 'print' : 'render', a[2] === '/print' ? 10 : 120);
+      if (!admin) { rateLimit(req, a[2] === '/print' ? 'print' : 'render', a[2] === '/print' ? 10 : 60); rateLimit({ headers: {}, socket: { remoteAddress: '*' } }, 'render-all', +process.env.RENDER_LIMIT_GLOBAL || 300); }
       const body = await readJson(req, 4e6), values = cleanValues(body.values); // images travel as data URLs
       const pdf = await withRender(() => renderPdf(doc, doc.fields, values));
       if (a[2] === '/render') return send(res, 200, pdf, 'application/pdf');
@@ -613,7 +633,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, pdfCache, readTemplate, PDF_CACHE_MAX, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -845,6 +865,9 @@ async function formView() {
     },
     set(k, v) { try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, JSON.stringify({ v, t: Date.now() })); } catch (e) {} },
   };
+  try { // sweep: remembered values of other forms expire too, even if those forms are never opened again
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith(LS) && k !== LS + 'lang' && k !== LS + 'docOpen') store.get(k.slice(LS.length)); }
+  } catch (e) { /* storage unavailable */ }
   const inputs = {}, rows = {};
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
   const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
