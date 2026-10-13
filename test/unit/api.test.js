@@ -9,6 +9,7 @@ process.env.DATA_DIR = path.join(tmp, 'data'); process.env.ADMIN_PASSWORD = 'api
 const app = require('../../stampfill.js');
 const { createMockIpp } = require('../mock-ipp.js');
 const SAMPLE = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'sample-form.pdf'));
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
 let base, ipp, ippUrl, cookie = '';
 const H = { 'X-Requested-With': 'stampfill' };
@@ -77,13 +78,30 @@ test('upload, edit and render a document', async () => {
   assert.equal((await call('GET', '/api/admin/docs/zzz')).status, 404);
 });
 
+let imgName;
+test('image fields: default image upload, public delivery, render with a data URL', async () => {
+  assert.equal((await call('POST', '/api/admin/images', Buffer.from('GIF89a nope'))).status, 400);
+  let r = await call('POST', '/api/admin/images', PNG, { 'Content-Type': 'image/png' }); assert.equal(r.status, 200);
+  imgName = (await r.json()).name; assert.match(imgName, /^[\w-]+\.png$/);
+  r = await call('GET', '/api/admin/images/' + imgName); assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'image/png');
+  r = await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, fields: [...doc.fields, { label: 'Stamp', type: 'image', prefill: 'instance', value: imgName, x: 400, y: 100, maxWidth: 60 }, { label: 'Sig', type: 'image', prefill: 'browser', x: 100, y: 100 }] });
+  doc = await r.json(); assert.equal(doc.fields.length, 5);
+  const pub = await (await fetch(base + '/api/d/' + doc.slug)).json();
+  assert.equal(pub.fields.find((f) => f.key === 'stamp').value, imgName); assert.equal(pub.fields.find((f) => f.key === 'sig').value, '');
+  r = await fetch(base + '/api/d/' + doc.slug + '/image/stamp'); assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'image/png');
+  assert.equal((await fetch(base + '/api/d/' + doc.slug + '/image/sig')).status, 404, 'only default images are served');
+  r = await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'T', sig: 'data:image/png;base64,' + PNG.toString('base64') } }) });
+  assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
+  assert.ok(fs.existsSync(path.join(app.IMAGES, imgName)));
+});
+
 test('public API exposes listed documents and renders with values', async () => {
   const pub = await (await fetch(base + '/api/docs')).json();
   assert.equal(pub.title, 'Forms'); assert.equal(pub.docs.length, 1); assert.equal(pub.docs[0].slug, doc.slug);
   assert.equal(pub.docs[0].id, undefined, 'internal id must not leak');
   const d = await (await fetch(base + '/api/d/' + doc.slug)).json();
   assert.equal(d.serverPrint, false); assert.equal(d.fields[1].value, 'Office'); assert.equal(d.fields[0].value, '');
-  assert.equal(d.fields.length, 2, 'fixed-text fields are not part of the public form');
+  assert.equal(d.fields.length, 4, 'fixed-text fields are not part of the public form');
   const r = await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'Test' } }) });
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal((await fetch(base + '/api/d/nope')).status, 404);
@@ -116,6 +134,7 @@ test('new link invalidates the old one; delete removes the PDF', async () => {
   const pdfFile = path.join(process.env.DATA_DIR, 'pdfs', doc.id + '.pdf'); assert.ok(fs.existsSync(pdfFile));
   assert.equal((await call('DELETE', '/api/admin/docs/' + doc.id)).status, 200);
   assert.ok(!fs.existsSync(pdfFile)); assert.equal((await call('GET', '/api/admin/docs/' + doc.id)).status, 404);
+  assert.ok(!fs.existsSync(path.join(app.IMAGES, imgName)), 'default images go with the document');
 });
 
 test('logout clears the session; repeated failures are rate limited', async () => {

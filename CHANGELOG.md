@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Field type "Image": users pick a PNG or JPEG (downscaled in the browser), the admin can set a
+  default image, and browser prefill remembers it per user, e.g. for signatures.
 - Field type "Fixed text": set by the admin, stamped on every print, not editable or visible as an
   input on the public form.
 - Prefill mode "Today's date" for date fields.
@@ -14,6 +16,11 @@ All notable changes to this project are documented here. The format follows
   data folder; README section on file permissions.
 - Startup check that refuses to run with an unwritable data directory and prints the UID/GID in use.
 - gzip for pages and pdf.js assets with an in-memory cache; `modulepreload` for pdf.js.
+
+### Fixed
+- The editor preview showed today's date for every date field; it now shows the fixed value when
+  one is set. Fixed values for date fields use a date picker, and dates typed as `13.10.2026`,
+  `13/10/2026` or `10/13/2026` (per the field's format) are accepted in fixed values and links.
 
 ### Changed
 - Interface refresh: new light/dark palette, sticky translucent header with logo, hover and focus

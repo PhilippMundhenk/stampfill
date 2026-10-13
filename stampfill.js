@@ -21,6 +21,9 @@
  *         /d/<link>    form for one document: fill, preview, print, download
  *         /admin       admin interface
  *         /healthz     liveness probe (JSON)
+ *
+ * Field types: text, textarea, date, checkbox, image (PNG/JPEG chosen by the user or a default set by
+ * the admin; remembered per browser when prefill is "browser", e.g. for signatures) and static (fixed text).
  */
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
@@ -31,6 +34,7 @@ const PORT = +process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
 const DATA = path.resolve(process.env.DATA_DIR || './data');
 const PDFS = path.join(DATA, 'pdfs');
+const IMAGES = path.join(DATA, 'images'); // default images of image fields (signatures, stamps)
 const DBF = path.join(DATA, 'db.json');
 const FONT = path.join(DATA, 'font.ttf');
 const MAX_PDF = (+process.env.MAX_PDF_MB || 25) * 1024 * 1024;
@@ -39,7 +43,7 @@ const SESSION_MS = 7 * 24 * 3600 * 1000;
 const VERSION = require('./package.json').version;
 
 // ---------------------------------------------------------------- storage
-try { fs.mkdirSync(PDFS, { recursive: true }); fs.accessSync(DATA, fs.constants.W_OK); fs.accessSync(PDFS, fs.constants.W_OK); }
+try { fs.mkdirSync(PDFS, { recursive: true }); fs.mkdirSync(IMAGES, { recursive: true }); fs.accessSync(DATA, fs.constants.W_OK); fs.accessSync(PDFS, fs.constants.W_OK); }
 catch (e) {
   const who = process.getuid ? 'uid ' + process.getuid() + ' / gid ' + process.getgid() : 'this user';
   console.error('stampfill: the data directory ' + DATA + ' is not writable by ' + who + ' (' + e.code + ').\n' +
@@ -62,6 +66,8 @@ function checkPw(pw) {
   if (process.env.ADMIN_PASSWORD) return sameStr(hashPw(pw, 'env'), hashPw(process.env.ADMIN_PASSWORD, 'env'));
   return !!db.auth && sameStr(hashPw(pw, db.auth.split(':')[0]), db.auth);
 }
+for (const d of db.docs) d.fields = cleanFields(d.fields, d.pages);
+pruneImages();
 if (!process.env.ADMIN_PASSWORD && !db.auth) {
   const pw = rid(12); db.auth = hashPw(pw);
   console.log('\n  Generated admin password: ' + pw + '\n  (change it under /admin > Settings)\n');
@@ -118,9 +124,38 @@ const str = (v, max) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v, def, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def; };
 
 // ---------------------------------------------------------------- documents
-const TYPES = ['text', 'textarea', 'date', 'checkbox', 'static']; // static: fixed text set by the admin, not editable
-const PREFILL = ['none', 'browser', 'instance', 'url', 'today']; // today: date fields only
+const TYPES = ['text', 'textarea', 'date', 'checkbox', 'image', 'static']; // static: fixed text set by the admin, not editable
+const PREFILL = ['none', 'browser', 'instance', 'url', 'today']; // today: date fields only; url: not for images
+function cleanPrefill(type, p) {
+  if (!PREFILL.includes(p) || type === 'static') return 'none';
+  if (p === 'today' && type !== 'date') return 'none';
+  if (p === 'url' && type === 'image') return 'none';
+  return p;
+}
+const IMG_NAME = /^[\w-]+\.(png|jpg)$/;
+const imgType = (b) => b.length > 4 && b[0] === 0x89 && b[1] === 0x50 ? 'png' : b.length > 3 && b[0] === 0xff && b[1] === 0xd8 ? 'jpg' : null;
+function imageFromValue(f, v) { // the image sent with the form wins, else the admin's default image
+  if (typeof v === 'string' && v.startsWith('data:image/')) { const b = Buffer.from(v.slice(v.indexOf(',') + 1), 'base64'); if (imgType(b)) return b; }
+  if (f.prefill === 'instance' && f.value && fs.existsSync(path.join(IMAGES, f.value))) return fs.readFileSync(path.join(IMAGES, f.value));
+  return null;
+}
+function pruneImages() { // drop files no field refers to any more
+  const used = new Set(db.docs.flatMap((d) => d.fields.filter((f) => f.type === 'image' && f.value).map((f) => f.value)));
+  for (const n of fs.readdirSync(IMAGES)) if (!used.has(n)) fs.rmSync(path.join(IMAGES, n), { force: true });
+}
 const DATEFMT = ['DD.MM.YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
+// accepts YYYY-MM-DD, the field's own display format, and D.M.YYYY / D/M/YYYY variants; returns ISO or the input unchanged
+function toIso(v, fmt) {
+  v = String(v == null ? '' : v).trim(); if (!v || /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const m = /^(\d{1,4})[./-](\d{1,2})[./-](\d{1,4})$/.exec(v); if (!m) return v;
+  let y, mo, d;
+  if (m[1].length === 4) { y = m[1]; mo = m[2]; d = m[3]; }
+  else if (fmt === 'MM/DD/YYYY') { mo = m[1]; d = m[2]; y = m[3]; }
+  else { d = m[1]; mo = m[2]; y = m[3]; }
+  if (y.length === 2) y = (+y < 50 ? '20' : '19') + y;
+  if (y.length !== 4 || +mo < 1 || +mo > 12 || +d < 1 || +d > 31) return v;
+  return y + '-' + mo.padStart(2, '0') + '-' + d.padStart(2, '0');
+}
 const keyOf = (s) => str(s, 60).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 function cleanFields(list, pages) {
   const seen = new Set();
@@ -129,14 +164,14 @@ function cleanFields(list, pages) {
     while (seen.has(key)) key = base + '_' + i++;
     seen.add(key);
     const type = TYPES.includes(f.type) ? f.type : 'text';
-    const prefill = type === 'static' ? 'none' : PREFILL.includes(f.prefill) && !(f.prefill === 'today' && type !== 'date') ? f.prefill : 'none';
+    const prefill = cleanPrefill(type, f.prefill);
+    const dateFormat = DATEFMT.includes(f.dateFormat) ? f.dateFormat : DATEFMT[0];
     return {
       id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key,
       type, required: type !== 'static' && !!f.required,
       page: Math.round(num(f.page, 1, 1, pages)), x: +num(f.x, 50, -5000, 5000).toFixed(1), y: +num(f.y, 50, -5000, 5000).toFixed(1),
       size: num(f.size, 11, 4, 72), maxWidth: num(f.maxWidth, 0, 0, 5000),
-      dateFormat: DATEFMT.includes(f.dateFormat) ? f.dateFormat : DATEFMT[0],
-      prefill, value: str(f.value, 2000),
+      dateFormat, prefill, value: type === 'date' ? toIso(str(f.value, 40), dateFormat) : type === 'image' ? (IMG_NAME.test(f.value) ? f.value : '') : str(f.value, 2000),
     };
   });
 }
@@ -168,9 +203,16 @@ async function renderPdf(doc, fields, values) {
   const pages = pdf.getPages();
   for (const f of fields) {
     const page = pages[f.page - 1]; if (!page) continue;
+    if (f.type === 'image') {
+      const buf = imageFromValue(f, values[f.key]); if (!buf) continue;
+      let img; try { img = imgType(buf) === 'png' ? await pdf.embedPng(buf) : await pdf.embedJpg(buf); } catch (e) { throw new HttpErr(400, 'The image for "' + f.label + '" could not be read'); }
+      const w = f.maxWidth > 0 ? f.maxWidth : 120;
+      page.drawImage(img, { x: f.x, y: f.y, width: w, height: w * img.height / img.width, rotate: degrees(page.getRotation().angle) });
+      continue;
+    }
     let text = f.type === 'static' ? f.value : str(values[f.key], 4000); // fixed text ignores whatever the user sent
     if (f.type === 'checkbox') text = text && text !== '0' && text !== 'false' ? 'X' : '';
-    else if (f.type === 'date') text = fmtDate(text.trim(), f.dateFormat);
+    else if (f.type === 'date') text = fmtDate(toIso(text, f.dateFormat), f.dateFormat);
     else if (f.type !== 'textarea' && f.type !== 'static') text = text.replace(/\s+/g, ' ');
     text = [...text.replace(/\r/g, '').replace(/\t/g, ' ')].map((ch) => (ch === '\n' || encodable(ch) ? ch : '?')).join('').trim();
     if (!text) continue;
@@ -182,9 +224,9 @@ async function renderPdf(doc, fields, values) {
   return Buffer.from(await pdf.save());
 }
 const sampleValues = (fields) => Object.fromEntries(fields.map((f) =>
-  [f.key, f.type === 'checkbox' ? '1' : f.type === 'date' ? new Date().toISOString().slice(0, 10) : f.value || (f.type === 'static' ? '' : f.label)]));
+  [f.key, f.type === 'checkbox' ? '1' : f.type === 'date' ? (f.prefill === 'instance' && f.value) || new Date().toISOString().slice(0, 10) : f.value || (f.type === 'static' ? '' : f.label)]));
 function cleanValues(v) {
-  const out = {}; if (v && typeof v === 'object') for (const k of Object.keys(v).slice(0, 300)) out[k] = str(v[k], 4000);
+  const out = {}; if (v && typeof v === 'object') for (const k of Object.keys(v).slice(0, 300)) out[k] = typeof v[k] === 'string' && v[k].startsWith('data:image/') ? v[k].slice(0, 6e6) : str(v[k], 4000);
   return out;
 }
 
@@ -218,7 +260,8 @@ async function ippPrint(pdfBuf, copies, jobName) {
 }
 
 // ---------------------------------------------------------------- static vendor files (pdf.js)
-const MIME = { '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', '.bcmap': 'application/octet-stream' };
+const MIME = { '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', '.bcmap': 'application/octet-stream', '.png': 'image/png', '.jpg': 'image/jpeg' };
+const sendImage = (res, name) => send(res, 200, fs.readFileSync(path.join(IMAGES, name)), MIME[path.extname(name)], { 'Cache-Control': 'private, max-age=3600' });
 function vendor(req, res, name) {
   let file = null;
   if (name === 'pdf.mjs') file = 'legacy/build/pdf.min.mjs';
@@ -243,15 +286,20 @@ async function route(req, res) {
   // ---- public API
   if (m === 'GET' && p === '/api/docs')
     return json(res, 200, { title: db.settings.siteTitle, docs: db.docs.filter((d) => d.listed).map((d) => ({ slug: d.slug, title: d.title, description: d.description, tags: d.tags })) });
+  if (m === 'GET' && (a = /^\/api\/d\/([\w-]+)\/image\/([\w-]+)$/.exec(p))) { // default image of an image field
+    const doc = db.docs.find((d) => d.slug === a[1]), f = doc && doc.fields.find((x) => x.key === a[2]);
+    if (!f || f.type !== 'image' || f.prefill !== 'instance' || !f.value || !fs.existsSync(path.join(IMAGES, f.value))) throw new HttpErr(404, 'No image');
+    return sendImage(res, f.value);
+  }
   if ((a = /^\/api\/d\/([\w-]+)(\/render|\/print)?$/.exec(p))) {
     const doc = db.docs.find((d) => d.slug === a[1]); if (!doc) throw new HttpErr(404, 'Document not found');
     if (m === 'GET' && !a[2]) return json(res, 200, publicDoc(doc, req));
     if (m === 'POST' && a[2]) {
-      const body = await readJson(req, 3e5), values = cleanValues(body.values);
+      const body = await readJson(req, 8e6), values = cleanValues(body.values); // images travel as data URLs
       const pdf = await renderPdf(doc, doc.fields, values);
       if (a[2] === '/render') return send(res, 200, pdf, 'application/pdf');
       if (!publicDoc(doc, req).serverPrint) throw new HttpErr(403, 'Printing from the server is not enabled');
-      const miss = doc.fields.find((f) => f.required && !values[f.key]); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
+      const miss = doc.fields.find((f) => f.required && !values[f.key] && !(f.type === 'image' && f.prefill === 'instance' && f.value)); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
       return json(res, 200, await ippPrint(pdf, Math.round(num(body.copies, 1, 1, 20)), doc.title));
     }
   }
@@ -292,6 +340,14 @@ async function route(req, res) {
     db.auth = hashPw(b.next); db.secret = rid(32); save(); // rotating the secret signs out all other sessions
     return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, newSession(), SESSION_MS / 1000) });
   }
+  if (m === 'POST' && p === '/api/admin/images') { // default image for an image field; the field refers to it by name
+    const buf = await readBody(req, 5 * 1024 * 1024), t = imgType(buf); if (!t) throw new HttpErr(400, 'Only PNG and JPEG images are supported');
+    const name = rid(8) + '.' + t; fs.writeFileSync(path.join(IMAGES, name), buf);
+    return json(res, 200, { name });
+  }
+  if (m === 'GET' && (a = /^\/api\/admin\/images\/([\w-]+\.(?:png|jpg))$/.exec(p))) {
+    if (!fs.existsSync(path.join(IMAGES, a[1]))) throw new HttpErr(404, 'No image'); return sendImage(res, a[1]);
+  }
   if (p === '/api/admin/docs') {
     if (m === 'GET') return json(res, 200, db.docs.map((d) => ({ id: d.id, slug: d.slug, title: d.title, tags: d.tags, listed: d.listed, fields: d.fields.length, updated: d.updated })));
     if (m === 'POST') {
@@ -310,7 +366,11 @@ async function route(req, res) {
         Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
         save(); return json(res, 200, adminDoc(doc));
       }
-      if (m === 'DELETE') { db.docs = db.docs.filter((d) => d !== doc); save(); fs.rmSync(pdfPath(doc.id), { force: true }); return json(res, 200, { ok: true }); }
+      if (m === 'DELETE') {
+        db.docs = db.docs.filter((d) => d !== doc); save(); fs.rmSync(pdfPath(doc.id), { force: true });
+        for (const f of doc.fields) if (f.type === 'image' && f.value) fs.rmSync(path.join(IMAGES, f.value), { force: true });
+        return json(res, 200, { ok: true });
+      }
     }
     if (a[2] === '/pdf' && m === 'PUT') {
       const buf = await readBody(req, MAX_PDF); doc.pages = await inspectPdf(buf);
@@ -346,7 +406,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, keyOf, fmtDate, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, keyOf, fmtDate, toIso, cleanPrefill, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -397,6 +457,7 @@ button.small{padding:6px 11px;font-size:13px}
 .skel{width:min(100%,560px);aspect-ratio:1/1.414;border-radius:3px;background:linear-gradient(100deg,var(--card) 30%,var(--line) 50%,var(--card) 70%);background-size:200% 100%;animation:shimmer 1.2s linear infinite}
 @keyframes shimmer{to{background-position:-200% 0}}
 .hint{font-size:12px;color:var(--mut);margin-top:4px}
+.imgbox{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.thumb{max-width:180px;max-height:90px;padding:4px;background:#fff;border:1px solid var(--line2);border-radius:6px}
 .actions{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
 .empty{padding:36px 20px;text-align:center;color:var(--mut);border:1px dashed var(--line2);border-radius:var(--r)}.empty.small{padding:18px 14px}
 .login{max-width:360px;margin:8vh auto 0;padding:28px}.login .logo{display:flex;width:46px;height:46px;align-items:center;justify-content:center;border-radius:12px;background:var(--acc-soft);color:var(--acc);margin-bottom:16px}.login .logo svg{width:26px;height:26px}.login h1{margin-bottom:2px}
@@ -447,11 +508,23 @@ function h(tag, attrs, ...kids) {
 }
 async function api(method, url, body, raw) {
   const o = { method, headers: { 'X-Requested-With': 'stampfill' }, credentials: 'same-origin' };
-  if (body instanceof Blob) { o.body = body; o.headers['Content-Type'] = 'application/pdf'; }
+  if (body instanceof Blob) { o.body = body; o.headers['Content-Type'] = body.type || 'application/octet-stream'; }
   else if (body !== undefined) { o.body = JSON.stringify(body); o.headers['Content-Type'] = 'application/json'; }
   const r = await fetch(url, o);
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch (e) {} const err = new Error(m); err.status = r.status; throw err; }
   return raw ? r.arrayBuffer() : r.json();
+}
+// reads an image file, scales it down to at most max px on the longer side and returns a data URL (PNG, or JPEG for JPEG input)
+async function imageData(file, max) {
+  const url = URL.createObjectURL(file);
+  try {
+    const im = new Image();
+    await new Promise((ok, no) => { im.onload = ok; im.onerror = () => no(new Error('That file is not a PNG or JPEG image')); im.src = url; });
+    const s = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight, 1));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(im.naturalWidth * s)); c.height = Math.max(1, Math.round(im.naturalHeight * s));
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+    return file.type === 'image/jpeg' ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png');
+  } finally { URL.revokeObjectURL(url); }
 }
 let toastT;
 function toast(msg, bad) { const t = $('#toast'); t.textContent = msg; t.className = 'show' + (bad ? ' bad' : ''); clearTimeout(toastT); toastT = setTimeout(() => t.className = '', bad ? 5000 : 2200); }
@@ -511,13 +584,15 @@ async function formView() {
   };
   const inputs = {}, rows = {};
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
-  const put = (f, v) => { if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = v; };
+  const put = (f, v) => { if (f.type === 'image') inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
   const HINT = { browser: 'Remembered in this browser', url: 'Can be carried in a link', instance: '', today: "Today's date" };
   const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const toIso = v => { const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(String(v).trim()); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : v; };
 
   const form = h('div', { class: 'panel' });
   for (const f of doc.fields) {
+    if (f.type === 'image') { form.append(rows[f.key] = imageRow(f)); continue; }
     const inp = inputs[f.key] = f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : f.type === 'date' ? 'date' : 'text' });
     inp.id = 'f_' + f.key;
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
@@ -530,6 +605,19 @@ async function formView() {
     form.append(rows[f.key]);
   }
   if (!doc.fields.length) form.append(h('p', { class: 'muted' }, 'This document has no fields to fill in.'));
+  function imageRow(f) { // file picker + thumbnail; the value is a data URL, or '' to fall back to the admin's default image
+    const fixedUrl = f.prefill === 'instance' && f.value ? '/api/d/' + slug + '/image/' + f.key : '';
+    const st = inputs[f.key] = { value: '' };
+    const thumb = h('img', { class: 'thumb', alt: '' }), file = h('input', { type: 'file', accept: 'image/png,image/jpeg', id: 'f_' + f.key, style: 'display:none' });
+    const pick = h('button', { class: 'small', onclick: () => file.click() }), clear = h('button', { class: 'small', onclick: () => { st.set(''); changed(); } }, 'Remove');
+    const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? 'Replace image' : 'Choose image'; };
+    st.set = v => { st.value = v || ''; show(); };
+    const changed = () => { if (f.prefill === 'browser') store.set(f.key, st.value); rows[f.key].classList.remove('bad'); schedule(); };
+    file.addEventListener('change', async () => { const fl = file.files[0]; file.value = ''; if (!fl) return; try { st.set(await imageData(fl, 1200)); changed(); } catch (e) { fail(e); } });
+    st.set(f.prefill === 'browser' ? store.get(f.key) : '');
+    const hint = f.prefill === 'instance' && f.value ? 'A default image is provided; you can replace it' : HINT[f.prefill];
+    return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, pick, clear, file)), hint && h('div', { class: 'hint' }, hint));
+  }
 
   const pv = h('div', { class: 'preview' }, h('div', { class: 'skel' }));
   let seq = 0, timer, current = null;
@@ -546,7 +634,7 @@ async function formView() {
   }
   function schedule() { clearTimeout(timer); timer = setTimeout(() => refresh().catch(fail), 200); }
   function complete() {
-    const miss = doc.fields.filter(f => f.required && !get(f));
+    const miss = doc.fields.filter(f => f.required && !get(f) && !(f.type === 'image' && f.prefill === 'instance' && f.value));
     miss.forEach(f => rows[f.key].classList.add('bad'));
     if (miss.length) { toast('Please fill in: ' + miss.map(f => f.label).join(', '), true); inputs[miss[0].key].focus(); }
     return !miss.length;
@@ -622,10 +710,10 @@ async function formView() {
 const ADMIN_HTML = page('Forms admin', '<header><a href="/admin" id="home">' + LOGO_SVG + '<span id="homeT">Forms admin</span></a><span class="sp"></span><span id="nav" class="row"></span></header>', String.raw`
 const app = $('#app');
 let me = null, dirty = false, lastHash = location.hash;
-const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)', static: 'Fixed text (not editable)' };
+const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)', image: 'Image (e.g. signature)', static: 'Fixed text (not editable)' };
 const PRE = { none: 'No prefill', browser: 'Remember per user (browser)', instance: 'Fixed value (this instance)', url: 'From link (URL)', today: "Today's date" };
 const PRE_SHORT = { none: '', browser: 'browser', instance: 'fixed', url: 'link', today: 'today' };
-const preFor = type => type === 'date' ? PRE : Object.fromEntries(Object.entries(PRE).filter(([k]) => k !== 'today'));
+const preFor = type => Object.fromEntries(Object.entries(PRE).filter(([k]) => (k !== 'today' || type === 'date') && (k !== 'url' || type !== 'image')));
 const DATEFMT = ['DD.MM.YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
 const keyOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 const linkOf = d => location.origin + '/d/' + d.slug;
@@ -719,10 +807,11 @@ async function editView(id) {
   function markers() {
     if (!vp) return;
     ov.replaceChildren(...d.fields.filter(f => f.page === pageNo).map(f => {
-      const pt = vp.convertToViewportPoint(f.x, f.y), fh = f.size * vp.scale;
-      const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '00.00.0000' : (f.value || f.label).split('\n')[0];
-      const w = (f.maxWidth > 0 ? f.maxWidth : Math.max(f.size, sample.length * f.size * 0.52)) * vp.scale;
-      const m = h('div', { class: 'mk' + (f.id === sel ? ' on' : ''), title: 'Drag to move', style: 'left:' + pt[0] + 'px;top:' + (pt[1] - fh * 0.85) + 'px;width:' + w + 'px;height:' + fh * 1.1 + 'px' }, h('span', {}, f.label));
+      const pt = vp.convertToViewportPoint(f.x, f.y), fh = f.size * vp.scale, img = f.type === 'image';
+      const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '0000-00-00' : (f.value || f.label).split('\n')[0];
+      const w = img ? (f.maxWidth || 120) * vp.scale : (f.maxWidth > 0 ? f.maxWidth : Math.max(f.size, sample.length * f.size * 0.52)) * vp.scale;
+      const hgt = img ? w * 0.4 : fh * 1.1, top = img ? pt[1] - hgt : pt[1] - fh * 0.85; // images grow upwards from (x, y)
+      const m = h('div', { class: 'mk' + (f.id === sel ? ' on' : ''), title: 'Drag to move', style: 'left:' + pt[0] + 'px;top:' + top + 'px;width:' + w + 'px;height:' + hgt + 'px' }, h('span', {}, f.label));
       m.addEventListener('pointerdown', e => drag(e, f, m));
       return m;
     }));
@@ -783,17 +872,31 @@ async function editView(id) {
     const keyIn = bind(h('input', { type: 'text', value: f.key }), 'key', el => keyOf(el.value));
     const labelIn = h('input', { type: 'text', value: f.label });
     labelIn.addEventListener('input', () => { const auto = f.key === keyOf(f.label); f.label = labelIn.value; if (auto) { f.key = keyOf(f.label); keyIn.value = f.key; } mark(); later(); flist(); });
-    const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => { f[prop] = s.value; if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.type === 'static') { f.prefill = 'none'; f.required = false; } mark(); side(); redraw().catch(fail); }); return s; };
-    const fixed = f.type === 'static';
+    const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => {
+      const was = f[prop]; f[prop] = s.value;
+      if (prop === 'type' && (was === 'image' || s.value === 'image')) f.value = ''; // an image name and a text value are not interchangeable
+      if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.prefill === 'url' && f.type === 'image') f.prefill = 'none';
+      if (f.type === 'static') { f.prefill = 'none'; f.required = false; }
+      mark(); side(); redraw().catch(fail); }); return s; };
+    const fixed = f.type === 'static', isImg = f.type === 'image';
+    const imgPick = h('input', { type: 'file', accept: 'image/png,image/jpeg', style: 'display:none', onchange: async () => {
+      const fl = imgPick.files[0]; imgPick.value = ''; if (!fl) return;
+      try { const r = await api('POST', '/api/admin/images', fl); f.value = r.name; mark(); side(); redraw().catch(fail); } catch (e) { fail(e); }
+    } });
     propsBox.replaceChildren(h('h2', {}, 'Selected field'), h('div', { class: 'panel' },
       h('label', { style: 'margin-top:0' }, fixed ? 'Label (only shown in this editor)' : 'Label (shown on the form)'), labelIn,
       h('div', { class: 'g2' }, h('div', {}, h('label', {}, 'Type'), sel2('type', TYPES)), h('div', {}, h('label', {}, 'Key (for links)'), keyIn)),
       f.type === 'date' && h('div', {}, h('label', {}, 'Date format'), sel2('dateFormat', Object.fromEntries(DATEFMT.map(x => [x, x])))),
-      h('div', { class: 'g4' }, h('div', {}, h('label', {}, 'Page'), numIn('page', 1, 1)), h('div', {}, h('label', {}, 'X (pt)'), numIn('x', 0.5)), h('div', {}, h('label', {}, 'Y (pt)'), numIn('y', 0.5)), h('div', {}, h('label', {}, 'Size'), numIn('size', 0.5, 4))),
-      f.type !== 'checkbox' && h('div', {}, h('label', {}, 'Wrap width in pt (0 = no wrapping)'), numIn('maxWidth', 5, 0)),
+      h('div', { class: 'g4' }, h('div', {}, h('label', {}, 'Page'), numIn('page', 1, 1)), h('div', {}, h('label', {}, 'X (pt)'), numIn('x', 0.5)), h('div', {}, h('label', {}, 'Y (pt)'), numIn('y', 0.5)), !isImg && h('div', {}, h('label', {}, 'Size'), numIn('size', 0.5, 4))),
+      isImg ? h('div', {}, h('label', {}, 'Width in pt (0 = 120; the height follows the image)'), numIn('maxWidth', 5, 0), h('div', { class: 'hint' }, 'The image grows upwards from the marked point. Users pick a PNG or JPEG; it is scaled down in their browser before upload.'))
+        : f.type !== 'checkbox' && h('div', {}, h('label', {}, 'Wrap width in pt (0 = no wrapping)'), numIn('maxWidth', 5, 0)),
       fixed && h('div', {}, h('label', {}, 'Text (printed as is, users cannot change it)'), bind(h('textarea', { rows: 3, value: f.value, placeholder: 'e.g. a footer note or an office address' }), 'value', null, flist)),
       !fixed && h('label', {}, 'Prefill'), !fixed && sel2('prefill', preFor(f.type)),
-      f.prefill === 'instance' && h('div', {}, h('label', {}, 'Fixed value'), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: 'text', value: f.value, placeholder: f.type === 'date' ? 'YYYY-MM-DD' : f.type === 'checkbox' ? '1 = ticked' : '' }), 'value')),
+      f.prefill === 'instance' && !isImg && h('div', {}, h('label', {}, 'Fixed value'), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: f.type === 'date' ? 'date' : 'text', value: f.value, placeholder: f.type === 'checkbox' ? '1 = ticked' : '' }), 'value')),
+      f.prefill === 'instance' && isImg && h('div', {}, h('label', {}, 'Default image (PNG or JPEG)'),
+        h('div', { class: 'imgbox' }, f.value && h('img', { class: 'thumb', alt: '', src: '/api/admin/images/' + f.value }), h('button', { class: 'small', onclick: () => imgPick.click() }, f.value ? 'Replace image' : 'Upload image'), imgPick),
+        h('div', { class: 'hint' }, 'Printed unless the user picks another image on the form. For an image nobody should replace, put it into the PDF template itself.')),
+      f.prefill === 'browser' && isImg && h('div', { class: 'hint' }, 'Good for signatures: each user picks their image once and the browser remembers it for every document that has a field with this key.'),
       f.prefill === 'browser' && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
       f.prefill === 'url' && h('div', { class: 'hint' }, 'Filled from the link, e.g. ' + linkOf(d) + '#' + f.key + '=value. Users get a "Copy link with values" button.'),
       f.prefill === 'today' && h('div', { class: 'hint' }, 'Set to the current date when the form opens. The user can still change it.'),

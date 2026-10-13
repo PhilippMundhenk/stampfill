@@ -24,6 +24,41 @@ test('fmtDate reformats ISO dates and leaves other input alone', () => {
   assert.equal(app.fmtDate('', 'YYYY-MM-DD'), '');
 });
 
+test('toIso accepts common date notations', () => {
+  assert.equal(app.toIso('2026-10-13', 'DD.MM.YYYY'), '2026-10-13');
+  assert.equal(app.toIso('13.10.2026', 'DD.MM.YYYY'), '2026-10-13');
+  assert.equal(app.toIso('1.2.1990', 'DD.MM.YYYY'), '1990-02-01');
+  assert.equal(app.toIso('13/10/2026', 'DD/MM/YYYY'), '2026-10-13');
+  assert.equal(app.toIso('10/13/2026', 'MM/DD/YYYY'), '2026-10-13');
+  assert.equal(app.toIso('2026/10/13', 'MM/DD/YYYY'), '2026-10-13');
+  assert.equal(app.toIso('13.10.26', 'DD.MM.YYYY'), '2026-10-13');
+  assert.equal(app.toIso('32.10.2026', 'DD.MM.YYYY'), '32.10.2026', 'invalid stays as typed');
+  assert.equal(app.toIso('next week', 'DD.MM.YYYY'), 'next week');
+  assert.equal(app.toIso('', 'DD.MM.YYYY'), '');
+});
+
+test('fixed dates are stored as ISO and used for the editor preview', () => {
+  const [bday, plain] = app.cleanFields([
+    { label: 'Birthday', type: 'date', prefill: 'instance', value: '01.02.1990' },
+    { label: 'When', type: 'date', prefill: 'today' },
+  ], 1);
+  assert.equal(bday.value, '1990-02-01');
+  const sample = app.sampleValues([bday, plain]);
+  assert.equal(sample.birthday, '1990-02-01', 'preview shows the fixed date, not today');
+  assert.match(sample.when, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+
+test('image fields: prefill rules, value validation, type sniffing', () => {
+  assert.equal(app.cleanPrefill('image', 'url'), 'none'); assert.equal(app.cleanPrefill('image', 'browser'), 'browser');
+  assert.equal(app.cleanPrefill('image', 'instance'), 'instance'); assert.equal(app.cleanPrefill('text', 'url'), 'url');
+  assert.equal(app.cleanPrefill('static', 'browser'), 'none'); assert.equal(app.cleanPrefill('text', 'today'), 'none');
+  const [a, b] = app.cleanFields([{ label: 'Sig', type: 'image', value: 'abc_123.png', prefill: 'instance' }, { label: 'Sig2', type: 'image', value: '../etc/passwd' }], 1);
+  assert.equal(a.value, 'abc_123.png'); assert.equal(b.value, '');
+  assert.equal(app.imgType(PNG), 'png'); assert.equal(app.imgType(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), 'jpg'); assert.equal(app.imgType(Buffer.from('GIF89a')), null);
+});
+
 test('cleanFields sanitises, defaults and de-duplicates keys', () => {
   const out = app.cleanFields([
     { label: 'Name', type: 'text', x: '10.26', y: 20, page: 9, size: 999, required: 'yes' },
@@ -75,8 +110,10 @@ test('renderPdf stamps values onto the template', async (t) => {
     { label: 'Name', x: 100, y: 700 }, { label: 'When', type: 'date', x: 100, y: 680, dateFormat: 'DD.MM.YYYY' },
     { label: 'Agree', type: 'checkbox', x: 100, y: 660 }, { label: 'Notes', type: 'textarea', x: 100, y: 640, maxWidth: 200 },
   ], 1);
-  fields.push(...app.cleanFields([{ label: 'Note', type: 'static', value: 'Do not write below', x: 100, y: 600 }], 1));
-  const pdf = await app.renderPdf({ id: 'doc1' }, fields, { name: 'Jürgen Müller', when: '2026-10-13', agree: '1', notes: 'line one\nline two', note: 'ignored' });
+  fields.push(...app.cleanFields([{ label: 'Note', type: 'static', value: 'Do not write below', x: 100, y: 600 }, { label: 'Sig', type: 'image', x: 100, y: 500, maxWidth: 80 }, { label: 'Sig2', type: 'image', x: 300, y: 500 }], 1));
+  const pdf = await app.renderPdf({ id: 'doc1' }, fields, { name: 'Jürgen Müller', when: '2026-10-13', agree: '1', notes: 'line one\nline two', note: 'ignored',
+    sig: 'data:image/png;base64,' + PNG.toString('base64'), sig2: 'data:image/png;base64,bm90IGFuIGltYWdl' });
+  await assert.rejects(app.renderPdf({ id: 'doc1' }, fields, { sig: 'data:image/png;base64,' + PNG.subarray(0, 20).toString('base64') }), /could not be read/);
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
   assert.ok(pdf.length > fs.statSync(SAMPLE).size, 'output should contain added content');
   const { PDFDocument } = require('pdf-lib');

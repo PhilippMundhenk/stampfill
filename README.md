@@ -27,6 +27,10 @@ build step. It is meant for a school office, a club, a small company, a househol
 - **Prefill** per field: remembered in the user's browser, fixed for this instance, carried in
   the link (`/d/<link>#key=value`), or today's date for date fields. Users get a "Copy link with
   values" button.
+- **Images**: an image field takes a PNG or JPEG from the user, scaled down in the browser, and
+  stamps it at the chosen width. With browser prefill each user picks their signature once and the
+  browser remembers it; the admin can also upload a default image (a stamp, a logo) that users may
+  replace. Default images live in `DATA_DIR/images`.
 - **Fixed text**: blocks the admin writes once (a footer note, an office address) that are printed
   on every copy and never shown to users as an input.
 - **Printing**: browser print (vector PDF on desktop Chromium, high-resolution page images

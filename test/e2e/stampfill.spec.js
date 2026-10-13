@@ -9,6 +9,7 @@ const PDF = path.join(__dirname, '..', 'fixtures', 'sample-form.pdf');
 const SHOTS = path.resolve(process.env.SCREENSHOTS_DIR || 'test-results/screenshots');
 const IPP_OUT = path.resolve('test-results/ipp');
 const PASSWORD = 'test-pass-123';
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 const TODAY = (() => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); })();
 
 test.describe.configure({ mode: 'serial' });
@@ -63,7 +64,7 @@ test('admin places fields by double-click and configures prefill modes', async (
   const sc = box.width / 595; // sample form is A4 portrait, 595 x 842 pt
   const defs = [
     ['Full name', 'text', 'browser', 150, 700], ['Date', 'date', 'today', 150, 670], ['Reference', 'text', 'url', 400, 670],
-    ['Address', 'textarea', 'browser', 150, 640], ['Issued by', 'text', 'instance', 150, 560],
+    ['Address', 'textarea', 'browser', 150, 640], ['Birthday', 'date', 'instance', 400, 640], ['Signature', 'image', 'browser', 400, 520], ['Issued by', 'text', 'instance', 150, 560],
   ];
   for (const [label, type, pre, x, y] of defs) {
     await admin.evaluate(() => scrollTo(0, 0));
@@ -73,11 +74,11 @@ test('admin places fields by double-click and configures prefill modes', async (
     await admin.fill('#fp input[type=text] >> nth=0', String(label));
     await admin.locator('#fp select').nth(0).selectOption(String(type));
     await admin.locator('#fp select').last().selectOption(String(pre));
-    if (pre === 'instance') await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Bietigheim');
+    if (pre === 'instance') { if (type === 'date') await admin.fill('#fp input[type=date]', '1990-02-01'); else await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Bietigheim'); }
     if (label === 'Full name') await admin.locator('#fp label.chk input').check();
     await expect(admin.locator('.fitem')).toHaveCount(defs.indexOf(defs.find((d) => d[0] === label)) + 1);
   }
-  await expect(admin.locator('.mk')).toHaveCount(5);
+  await expect(admin.locator('.mk')).toHaveCount(7);
   // keys are derived from labels
   await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('issued_by');
   // "today" is only offered for date fields
@@ -92,7 +93,10 @@ test('admin places fields by double-click and configures prefill modes', async (
   await expect(admin.locator('#fp label.chk')).toHaveCount(0); // no "required" either
   await admin.fill('#fp textarea', 'Office copy - do not hand out');
   await expect(admin.locator('.fitem', { hasText: 'Footer' }).locator('.tag')).toHaveText('fixed text');
-  await expect(admin.locator('.mk')).toHaveCount(6);
+  await expect(admin.locator('.mk')).toHaveCount(8);
+  // image fields never offer link prefill
+  await admin.locator('.fitem', { hasText: 'Signature' }).click();
+  await expect(admin.locator('#fp select').last().locator('option[value=url]')).toHaveCount(0);
   await admin.locator('.fitem', { hasText: 'Issued by' }).click();
 });
 
@@ -122,7 +126,7 @@ test('admin saves metadata and gets a direct link', async () => {
   link = await admin.locator('input[readonly]').inputValue();
   expect(link).toMatch(/^http:\/\/127\.0\.0\.1:8099\/d\/[\w-]+$/);
   // data survives a reload
-  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(6);
+  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(8);
   await expect(admin.locator('input[placeholder^="e.g."]')).toHaveValue('school, demo');
 });
 
@@ -153,13 +157,15 @@ test('public index lists the document and filters by tag', async () => {
 });
 
 test('form prefills from the link and from fixed values, validates required fields', async () => {
-  await user.goto(link + '#reference=REF-4711');
+  await user.goto(link + '#reference=REF-4711&birthday=24.12.1985'); // link values may use the display notation
   await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_reference')).toHaveValue('REF-4711');
   await expect(user.locator('#f_issued_by')).toHaveValue('Office Bietigheim');
   await expect(user.locator('#f_date')).toHaveValue(TODAY);
+  await expect(user.locator('#f_birthday')).toHaveValue('1985-12-24'); // from the link, normalised for the date input
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
-  await expect(user.locator('.panel label')).toHaveCount(5);
+  await expect(user.locator('.panel label')).toHaveCount(7);
+  await expect(user.locator('.thumb')).toBeHidden(); // no signature yet
   await expect(user.locator('#f_full_name')).toHaveValue('');
   await user.click('button.pri'); // Print with the required field empty
   await expect(user.locator('#toast.bad')).toContainText('Please fill in: Full name');
@@ -168,6 +174,9 @@ test('form prefills from the link and from fixed values, validates required fiel
     await user.fill('#f_full_name', 'Jürgen Müller-Weiß'); await user.fill('#f_date', '2026-10-13');
     await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
   });
+  await settle(user, () => user.locator('#f_signature').setInputFiles({ name: 'sig.png', mimeType: 'image/png', buffer: PNG }));
+  await expect(user.locator('.thumb')).toBeVisible();
+  await expect(user.locator('.imgbox button', { hasText: 'Replace image' })).toBeVisible();
   await shot(user, '6-form', true);
 });
 
@@ -202,6 +211,8 @@ test('browser-remembered values survive a reload, link values do not', async () 
   await expect(user.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
   await expect(user.locator('#f_address')).toHaveValue(/74321/);
   await expect(user.locator('#f_reference')).toHaveValue('');
+  await expect(user.locator('#f_birthday')).toHaveValue('1990-02-01'); // back to the fixed value without the link
+  await expect(user.locator('.thumb')).toBeVisible(); // the signature is remembered in this browser
   await expect(user.locator('#f_date')).toHaveValue(TODAY); // "today" is recomputed on every open, not remembered
 });
 
@@ -226,6 +237,7 @@ test('"Forget saved values" clears browser prefill', async () => {
   await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_full_name')).toHaveValue('');
   await expect(user.locator('#f_address')).toHaveValue('');
+  await expect(user.locator('.thumb')).toBeHidden();
 });
 
 test('form works on a phone-sized screen', async () => {
