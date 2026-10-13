@@ -7,6 +7,7 @@ const fs = require('fs'), os = require('os'), path = require('path');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'stampfill-api-'));
 process.env.DATA_DIR = path.join(tmp, 'data'); process.env.ADMIN_PASSWORD = 'api-pass-123';
 const app = require('../../stampfill.js');
+const db = () => app.db;
 const { createMockIpp } = require('../mock-ipp.js');
 const SAMPLE = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'sample-form.pdf'));
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
@@ -65,6 +66,13 @@ test('upload, edit and render a document', async () => {
   assert.equal((await call('POST', '/api/admin/docs?title=Nope', Buffer.from('not a pdf'))).status, 400);
   let r = await call('POST', '/api/admin/docs?title=Sample%20form', SAMPLE); assert.equal(r.status, 200);
   doc = await r.json(); assert.equal(doc.title, 'Sample form'); assert.equal(doc.pages, 1); assert.deepEqual(doc.fields, []);
+  assert.match(doc.slug, /^[\w-]{12,16}$/, 'links are random unless a name is set'); assert.equal(doc.password, undefined); assert.equal(doc.protected, false);
+  const twin = await (await call('POST', '/api/admin/docs?title=Sample%20form', SAMPLE)).json();
+  let renamed = await (await call('PUT', '/api/admin/docs/' + twin.id, { ...twin, slug: 'Second Copy!' })).json(); assert.equal(renamed.slug, 'second-copy', 'a readable link name');
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, slug: 'sample-form' })).json(); assert.equal(doc.slug, 'sample-form');
+  assert.equal((await call('PUT', '/api/admin/docs/' + twin.id, { ...renamed, slug: 'sample-form' })).status, 400, 'link names are unique');
+  renamed = await (await call('PUT', '/api/admin/docs/' + twin.id, { ...renamed, slug: '' })).json(); assert.match(renamed.slug, /^[\w-]{12,16}$/, 'empty name: random again');
+  assert.equal((await call('DELETE', '/api/admin/docs/' + twin.id)).status, 200);
   r = await call('PUT', '/api/admin/docs/' + doc.id, {
     title: 'Sample form', description: 'desc', tags: ['demo', 'demo', ' x '], listed: true,
     fields: [{ label: 'Full name', x: 150, y: 700, required: true, prefill: 'browser' }, { label: 'Issued by', x: 150, y: 560, prefill: 'instance', value: 'Office' },
@@ -72,6 +80,7 @@ test('upload, edit and render a document', async () => {
   });
   doc = await r.json(); assert.deepEqual(doc.tags, ['demo', 'x']); assert.equal(doc.fields.length, 3); assert.equal(doc.listed, true);
   const list = await (await call('GET', '/api/admin/docs')).json(); assert.equal(list.length, 1); assert.equal(list[0].fields, 3);
+  assert.equal(doc.slug, 'sample-form', 'saving without touching the link name keeps it');
   r = await call('POST', '/api/admin/docs/' + doc.id + '/render', { fields: doc.fields }); assert.equal(r.status, 200);
   assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal(Buffer.from(await r.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
@@ -110,8 +119,15 @@ test('public API exposes listed documents and renders with values', async () => 
 
 test('server print goes through IPP once a printer is configured', async () => {
   let r = await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: 'ftp://nope', publicPrint: true }); assert.equal(r.status, 400);
-  r = await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: ippUrl, publicPrint: true }); assert.equal(r.status, 200);
+  r = await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: ippUrl, publicPrint: true, printButton: 'Print at school' }); assert.equal(r.status, 200);
+  assert.equal((await r.json()).printButton, 'Print at school');
   assert.equal((await (await fetch(base + '/api/docs')).json()).title, 'My forms');
+  let d = await (await fetch(base + '/api/d/' + doc.slug)).json(); assert.equal(d.serverPrint, true); assert.equal(d.printLabel, 'Print at school');
+  // switched off per document
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, serverPrint: false })).json(); assert.equal(doc.serverPrint, false);
+  d = await (await fetch(base + '/api/d/' + doc.slug)).json(); assert.equal(d.serverPrint, false);
+  assert.equal((await fetch(base + '/api/d/' + doc.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'Jane' } }) })).status, 403);
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, serverPrint: true })).json();
   const miss = await fetch(base + '/api/d/' + doc.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });
   assert.equal(miss.status, 400); assert.match((await miss.json()).error, /Full name/);
   r = await fetch(base + '/api/d/' + doc.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'Jane' }, copies: 2 }) });
@@ -124,6 +140,30 @@ test('server print goes through IPP once a printer is configured', async () => {
   await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: 'http://127.0.0.1:1/printers/x', publicPrint: true });
   r = await fetch(base + '/api/d/' + doc.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'Jane' } }) });
   assert.equal(r.status, 502);
+});
+
+test('a form password locks the public endpoints until unlocked', async () => {
+  assert.equal((await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: 'abc' })).status, 400, 'too short');
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: 'open-sesame' })).json();
+  assert.equal(doc.protected, true); assert.equal(doc.password, undefined, 'the hash never leaves the server');
+  assert.equal(db().docs[0].password.includes('open-sesame'), false);
+  const pubList = await (await fetch(base + '/api/docs')).json(); assert.equal(pubList.docs[0].protected, true);
+  for (const p of ['', '/render', '/image/stamp']) {
+    const r = await fetch(base + '/api/d/' + doc.slug + p, p === '/render' ? { method: 'POST', headers: H, body: '{}' } : {});
+    assert.equal(r.status, 401, p + ' is locked');
+  }
+  assert.equal((await call('GET', '/api/d/' + doc.slug)).status, 200, 'admins are never locked out');
+  let r = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'nope' }) }); assert.equal(r.status, 401);
+  r = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'open-sesame' }) }); assert.equal(r.status, 200);
+  const uc = r.headers.get('set-cookie'); assert.match(uc, /^sf_u_[\w-]+=[\w-]+; Path=\/; HttpOnly; SameSite=Strict; Max-Age=43200$/);
+  const ucookie = uc.split(';')[0];
+  assert.equal((await fetch(base + '/api/d/' + doc.slug, { headers: { Cookie: ucookie } })).status, 200);
+  assert.equal((await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: { ...H, Cookie: ucookie }, body: JSON.stringify({ values: {} }) })).status, 200);
+  // changing the password invalidates earlier unlocks; removing it opens the form again
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: 'other-one' })).json();
+  assert.equal((await fetch(base + '/api/d/' + doc.slug, { headers: { Cookie: ucookie } })).status, 401);
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: '' })).json(); assert.equal(doc.protected, false);
+  assert.equal((await fetch(base + '/api/d/' + doc.slug)).status, 200);
 });
 
 test('new link invalidates the old one; delete removes the PDF', async () => {

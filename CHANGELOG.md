@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Optional readable link name per document (`/d/library-card-request`); links stay random
+  unless a name is set.
+- Optional password per document, checked on every public endpoint; users unlock once per browser.
+- Per-field "Hide on the form" switch; fields with a fixed value are hidden by default.
+- The server-print button is called "Print at home", its label is a setting, and each document can
+  switch it off.
 - Field type "Image": users pick a PNG or JPEG (downscaled in the browser), the admin can set a
   default image, and browser prefill remembers it per user, e.g. for signatures.
 - Field type "Fixed text": set by the admin, stamped on every print, not editable or visible as an
@@ -18,11 +24,16 @@ All notable changes to this project are documented here. The format follows
 - gzip for pages and pdf.js assets with an in-memory cache; `modulepreload` for pdf.js.
 
 ### Fixed
+- Instances with existing documents crashed at startup after 1.0.0 ("Cannot access 'keyOf' before
+  initialization"). Stored data is now upgraded by one idempotent migration step that is tested
+  against a 1.0.0 data directory.
 - The editor preview showed today's date for every date field; it now shows the fixed value when
   one is set. Fixed values for date fields use a date picker, and dates typed as `13.10.2026`,
   `13/10/2026` or `10/13/2026` (per the field's format) are accepted in fixed values and links.
 
 ### Changed
+- New date fields default to the YYYY-MM-DD print format in the editor. Stored fields keep their
+  format.
 - Interface refresh: new light/dark palette, sticky translucent header with logo, hover and focus
   states, skeleton preview while loading, sticky action bar on phones, styled selects and toasts.
 - Live preview debounce reduced to 200 ms and the previous page stays visible, dimmed, while the

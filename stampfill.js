@@ -52,7 +52,7 @@ catch (e) {
   process.exit(1);
 }
 const rid = (n = 9) => crypto.randomBytes(n).toString('base64url');
-const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false };
+const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home' };
 let db = { secret: rid(32), auth: null, settings: { ...DEFAULTS }, docs: [] };
 if (fs.existsSync(DBF)) { const l = JSON.parse(fs.readFileSync(DBF, 'utf8')); db = Object.assign(db, l, { settings: { ...DEFAULTS, ...(l.settings || {}) } }); }
 const save = () => { fs.writeFileSync(DBF + '.tmp', JSON.stringify(db, null, 1)); fs.renameSync(DBF + '.tmp', DBF); };
@@ -79,6 +79,16 @@ function isAdmin(req) {
 }
 const cookie = (req, val, maxAge) => 'sf_s=' + val + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + maxAge +
   (req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '');
+const cookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((c) => c.length === 2));
+// per-form password: the unlock cookie is bound to the document and its current password hash
+const docSign = (doc) => crypto.createHmac('sha256', db.secret).update('doc.' + doc.id + '.' + doc.password).digest('base64url');
+const hasAccess = (doc, req) => !doc.password || isAdmin(req) || sameStr(cookies(req)['sf_u_' + doc.id] || '', docSign(doc));
+function checkFails(req) { const f = fails.get(clientIp(req)); if (f && f.until > Date.now()) throw new HttpErr(429, 'Too many attempts — try again in a few minutes'); }
+async function noteFail(req) {
+  pruneFails(); const ip = clientIp(req), f = fails.get(ip), n = (f ? f.n : 0) + 1;
+  fails.set(ip, { n, until: n >= 5 ? Date.now() + 5 * 60000 : 0, at: Date.now() });
+  await new Promise((r) => setTimeout(r, 400));
+}
 const fails = new Map(); // ip -> { n, until, at }
 function pruneFails() { // keep the map bounded: drop entries whose block expired and that are older than the block window
   if (fails.size < 1000) return;
@@ -154,6 +164,7 @@ function toIso(v, fmt) {
   if (y.length !== 4 || +mo < 1 || +mo > 12 || +d < 1 || +d > 31) return v;
   return y + '-' + mo.padStart(2, '0') + '-' + d.padStart(2, '0');
 }
+const slugOf = (s) => str(s, 80).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 const keyOf = (s) => str(s, 60).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 function cleanFields(list, pages) {
   const seen = new Set();
@@ -166,7 +177,7 @@ function cleanFields(list, pages) {
     const dateFormat = DATEFMT.includes(f.dateFormat) ? f.dateFormat : DATEFMT[0];
     return {
       id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key,
-      type, required: type !== 'static' && !!f.required,
+      type, hidden: type !== 'static' && !!f.hidden, required: type !== 'static' && !f.hidden && !!f.required,
       page: Math.round(num(f.page, 1, 1, pages)), x: +num(f.x, 50, -5000, 5000).toFixed(1), y: +num(f.y, 50, -5000, 5000).toFixed(1),
       size: num(f.size, 11, 4, 72), maxWidth: num(f.maxWidth, 0, 0, 5000),
       dateFormat, prefill, value: type === 'date' ? toIso(str(f.value, 40), dateFormat) : type === 'image' ? (IMG_NAME.test(f.value) ? f.value : '') : str(f.value, 2000),
@@ -174,11 +185,11 @@ function cleanFields(list, pages) {
   });
 }
 const cleanTags = (t) => [...new Set((Array.isArray(t) ? t : []).map((x) => str(x, 30).trim()).filter(Boolean))].slice(0, 20);
-const adminDoc = (d) => d;
+const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password });
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
-  serverPrint: !!db.settings.printerUrl && (db.settings.publicPrint || isAdmin(req)),
-  fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, type: f.type, required: f.required, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
+  serverPrint: !!db.settings.printerUrl && d.serverPrint !== false && (db.settings.publicPrint || isAdmin(req)), printLabel: db.settings.printButton,
+  fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, type: f.type, required: f.required, hidden: f.hidden, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
 });
 async function inspectPdf(buf) {
   if (buf.length < 5 || buf.subarray(0, 5).toString() !== '%PDF-') throw new HttpErr(400, 'That file is not a PDF');
@@ -283,37 +294,40 @@ async function route(req, res) {
 
   // ---- public API
   if (m === 'GET' && p === '/api/docs')
-    return json(res, 200, { title: db.settings.siteTitle, docs: db.docs.filter((d) => d.listed).map((d) => ({ slug: d.slug, title: d.title, description: d.description, tags: d.tags })) });
+    return json(res, 200, { title: db.settings.siteTitle, docs: db.docs.filter((d) => d.listed).map((d) => ({ slug: d.slug, title: d.title, description: d.description, tags: d.tags, protected: !!d.password })) });
   if (m === 'GET' && (a = /^\/api\/d\/([\w-]+)\/image\/([\w-]+)$/.exec(p))) { // default image of an image field
     const doc = db.docs.find((d) => d.slug === a[1]), f = doc && doc.fields.find((x) => x.key === a[2]);
     if (!f || f.type !== 'image' || f.prefill !== 'instance' || !f.value || !fs.existsSync(path.join(IMAGES, f.value))) throw new HttpErr(404, 'No image');
+    if (!hasAccess(doc, req)) throw new HttpErr(401, 'Password required');
     return sendImage(res, f.value);
   }
-  if ((a = /^\/api\/d\/([\w-]+)(\/render|\/print)?$/.exec(p))) {
+  if ((a = /^\/api\/d\/([\w-]+)(\/render|\/print|\/unlock)?$/.exec(p))) {
     const doc = db.docs.find((d) => d.slug === a[1]); if (!doc) throw new HttpErr(404, 'Document not found');
+    if (a[2] === '/unlock' && m === 'POST') {
+      checkFails(req);
+      const body = await readJson(req, 1e4);
+      if (!doc.password || typeof body.password !== 'string' || !sameStr(hashPw(body.password, doc.password.split(':')[0]), doc.password)) { await noteFail(req); throw new HttpErr(401, 'Wrong password'); }
+      fails.delete(clientIp(req));
+      return json(res, 200, { ok: true }, { 'Set-Cookie': 'sf_u_' + doc.id + '=' + docSign(doc) + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200' + (req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '') });
+    }
+    if (!hasAccess(doc, req)) throw new HttpErr(401, 'Password required');
     if (m === 'GET' && !a[2]) return json(res, 200, publicDoc(doc, req));
     if (m === 'POST' && a[2]) {
       const body = await readJson(req, 8e6), values = cleanValues(body.values); // images travel as data URLs
       const pdf = await renderPdf(doc, doc.fields, values);
       if (a[2] === '/render') return send(res, 200, pdf, 'application/pdf');
       if (!publicDoc(doc, req).serverPrint) throw new HttpErr(403, 'Printing from the server is not enabled');
-      const miss = doc.fields.find((f) => f.required && !values[f.key] && !(f.type === 'image' && f.prefill === 'instance' && f.value)); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
+      const miss = doc.fields.find((f) => f.required && !f.hidden && !values[f.key] && !(f.type === 'image' && f.prefill === 'instance' && f.value)); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
       return json(res, 200, await ippPrint(pdf, Math.round(num(body.copies, 1, 1, 20)), doc.title));
     }
   }
 
   // ---- login
   if (m === 'POST' && p === '/api/login') {
-    const ip = clientIp(req), f = fails.get(ip);
-    if (f && f.until > Date.now()) throw new HttpErr(429, 'Too many attempts — try again in a few minutes');
+    checkFails(req);
     const body = await readJson(req, 1e4);
-    if (!checkPw(body.password)) {
-      pruneFails();
-      const n = (f ? f.n : 0) + 1; fails.set(ip, { n, until: n >= 5 ? Date.now() + 5 * 60000 : 0, at: Date.now() });
-      await new Promise((r) => setTimeout(r, 400));
-      throw new HttpErr(401, 'Wrong password');
-    }
-    fails.delete(ip);
+    if (!checkPw(body.password)) { await noteFail(req); throw new HttpErr(401, 'Wrong password'); }
+    fails.delete(clientIp(req));
     return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, newSession(), SESSION_MS / 1000) });
   }
   if (m === 'POST' && p === '/api/logout') return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, 'x', 0) });
@@ -326,7 +340,7 @@ async function route(req, res) {
     if (m === 'PUT') {
       const b = await readJson(req), u = str(b.printerUrl, 500).trim();
       if (u && !/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
-      db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint }; save();
+      db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint, printButton: str(b.printButton, 40).trim() || DEFAULTS.printButton }; save();
     }
     if (m === 'GET' || m === 'PUT') return json(res, 200, db.settings);
   }
@@ -347,10 +361,11 @@ async function route(req, res) {
     if (!fs.existsSync(path.join(IMAGES, a[1]))) throw new HttpErr(404, 'No image'); return sendImage(res, a[1]);
   }
   if (p === '/api/admin/docs') {
-    if (m === 'GET') return json(res, 200, db.docs.map((d) => ({ id: d.id, slug: d.slug, title: d.title, tags: d.tags, listed: d.listed, fields: d.fields.length, updated: d.updated })));
+    if (m === 'GET') return json(res, 200, db.docs.map((d) => ({ id: d.id, slug: d.slug, title: d.title, tags: d.tags, listed: d.listed, protected: !!d.password, fields: d.fields.length, updated: d.updated })));
     if (m === 'POST') {
       const buf = await readBody(req, MAX_PDF), pages = await inspectPdf(buf);
-      const doc = { id: rid(8), slug: rid(10), title: str(url.searchParams.get('title'), 120).trim() || 'Untitled', description: '', tags: [], listed: false, pages, fields: [], created: Date.now(), updated: Date.now() };
+      const title = str(url.searchParams.get('title'), 120).trim() || 'Untitled';
+      const doc = { id: rid(8), slug: rid(10), title, description: '', tags: [], listed: false, serverPrint: true, password: null, pages, fields: [], created: Date.now(), updated: Date.now() };
       fs.writeFileSync(pdfPath(doc.id), buf); db.docs.unshift(doc); save();
       return json(res, 200, adminDoc(doc));
     }
@@ -361,7 +376,17 @@ async function route(req, res) {
       if (m === 'GET') return json(res, 200, adminDoc(doc));
       if (m === 'PUT') {
         const b = await readJson(req);
-        Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
+        if (b.slug !== undefined && b.slug !== doc.slug) { // the link name only changes when the admin edits it
+          const s = slugOf(b.slug) || rid(10); // an empty name goes back to a random, unguessable link
+          if (db.docs.some((x) => x !== doc && x.slug === s)) throw new HttpErr(400, 'That link name is already used by another document');
+          doc.slug = s;
+        }
+        if (b.password !== undefined) { // '' removes the password, a string sets a new one, absent keeps it
+          const pw = str(b.password, 200);
+          if (pw && pw.length < 4) throw new HttpErr(400, 'The form password needs at least 4 characters');
+          doc.password = pw ? hashPw(pw) : null;
+        }
+        Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, serverPrint: b.serverPrint !== false, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
         save(); return json(res, 200, adminDoc(doc));
       }
       if (m === 'DELETE') {
@@ -393,6 +418,7 @@ function migrate() {
     doc.description = str(doc.description, 500); doc.tags = cleanTags(doc.tags); doc.listed = !!doc.listed;
     doc.pages = Math.max(1, Math.round(num(doc.pages, 1, 1, 10000)));
     doc.fields = cleanFields(doc.fields, doc.pages);
+    if (doc.serverPrint === undefined) doc.serverPrint = true; if (doc.password === undefined) doc.password = null;
   }
   pruneImages(); save();
 }
@@ -418,7 +444,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, migrate, keyOf, fmtDate, toIso, cleanPrefill, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, migrate, keyOf, slugOf, fmtDate, toIso, cleanPrefill, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -574,17 +600,27 @@ async function listView() {
   function draw() {
     chips.replaceChildren(...(tags.length ? ['', ...tags] : []).map(t => h('button', { class: 'chip' + (t === tag ? ' on' : ''), onclick: () => { tag = t; history.replaceState(null, '', t ? '?tag=' + encodeURIComponent(t) : '/'); draw(); } }, t || 'All')));
     const shown = docs.filter(d => (!tag || d.tags.includes(tag)) && (!q || (d.title + ' ' + d.description + ' ' + d.tags.join(' ')).toLowerCase().includes(q)));
-    list.replaceChildren(...shown.map(d => h('a', { class: 'card', href: '/d/' + d.slug }, h('b', {}, d.title), h('p', {}, d.description), h('div', {}, d.tags.map(t => h('span', { class: 'tag' }, t))))));
+    list.replaceChildren(...shown.map(d => h('a', { class: 'card', href: '/d/' + d.slug }, h('b', {}, d.title), h('p', {}, d.description), h('div', {}, d.tags.map(t => h('span', { class: 'tag' }, t)), d.protected && h('span', { class: 'tag', title: 'Needs a password' }, 'password')))));
     if (!shown.length) list.append(h('p', { class: 'empty', style: 'grid-column:1/-1' }, docs.length ? 'No matching documents.' : 'No documents are listed here. Use the direct link you were given.'));
   }
   app.append(h('h1', {}, 'Documents'), h('input', { type: 'search', placeholder: 'Search documents', oninput: e => { q = e.target.value.trim().toLowerCase(); draw(); } }), chips, list);
   draw();
 }
 
+function lockView() {
+  const pw = h('input', { type: 'password', autocomplete: 'off', autofocus: true });
+  app.replaceChildren(h('form', { class: 'panel login', onsubmit: async e => { e.preventDefault(); try { await api('POST', '/api/d/' + slug + '/unlock', { password: pw.value }); app.replaceChildren(); await formView(); } catch (err) { fail(err); pw.select(); } } },
+    h('div', { class: 'logo', innerHTML: LOGO }), h('h1', {}, 'This form is protected'), h('p', { class: 'muted small', style: 'margin:0 0 6px' }, 'Enter the password you were given to open it.'),
+    h('label', {}, 'Password'), pw, h('div', { style: 'margin-top:16px' }, h('button', { class: 'pri', style: 'width:100%' }, 'Open form'))));
+}
+
 async function formView() {
   let doc;
   try { doc = await api('GET', '/api/d/' + slug); }
-  catch (e) { app.append(h('h1', {}, 'Document not found'), h('p', { class: 'muted' }, 'This link is not valid any more.')); return; }
+  catch (e) {
+    if (e.status === 401) return lockView();
+    app.append(h('h1', {}, 'Document not found'), h('p', { class: 'muted' }, 'This link is not valid any more.')); return;
+  }
   document.title = doc.title; $('#homeT').textContent = doc.siteTitle;
   // values from the link: #key=value (preferred, never sent to the server) or ?key=value
   const fromUrl = new URLSearchParams(location.search);
@@ -616,6 +652,8 @@ async function formView() {
       : h('div', {}, h('label', { htmlFor: inp.id }, name), inp, HINT[f.prefill] && h('div', { class: 'hint' }, HINT[f.prefill]));
     form.append(rows[f.key]);
   }
+  for (const f of doc.fields) if (f.hidden && rows[f.key]) rows[f.key].style.display = 'none'; // hidden fields keep their value and are still printed
+  if (doc.fields.length && doc.fields.every(f => f.hidden)) form.append(h('p', { class: 'muted' }, 'Nothing to fill in here — just print or download.'));
   if (!doc.fields.length) form.append(h('p', { class: 'muted' }, 'This document has no fields to fill in.'));
   function imageRow(f) { // file picker + thumbnail; the value is a data URL, or '' to fall back to the admin's default image
     const fixedUrl = f.prefill === 'instance' && f.value ? '/api/d/' + slug + '/image/' + f.key : '';
@@ -646,7 +684,7 @@ async function formView() {
   }
   function schedule() { clearTimeout(timer); timer = setTimeout(() => refresh().catch(fail), 200); }
   function complete() {
-    const miss = doc.fields.filter(f => f.required && !get(f) && !(f.type === 'image' && f.prefill === 'instance' && f.value));
+    const miss = doc.fields.filter(f => f.required && !f.hidden && !get(f) && !(f.type === 'image' && f.prefill === 'instance' && f.value));
     miss.forEach(f => rows[f.key].classList.add('bad'));
     if (miss.length) { toast('Please fill in: ' + miss.map(f => f.label).join(', '), true); inputs[miss[0].key].focus(); }
     return !miss.length;
@@ -708,7 +746,7 @@ async function formView() {
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
       h('button', { class: 'pri', onclick: guard(browserPrint) }, 'Print'),
-      doc.serverPrint && h('button', { onclick: guard(serverPrint) }, 'Send to printer'),
+      doc.serverPrint && h('button', { onclick: guard(serverPrint) }, doc.printLabel || 'Print at home'),
       h('button', { onclick: guard(download) }, 'Download PDF')),
     (has('url') || has('browser')) && h('div', { class: 'row', style: 'margin-top:10px' },
       has('url') && h('button', { class: 'small', onclick: shareLink, title: 'Copies a link that opens this form with the marked fields filled in' }, 'Copy link with values'),
@@ -726,9 +764,10 @@ const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbo
 const PRE = { none: 'No prefill', browser: 'Remember per user (browser)', instance: 'Fixed value (this instance)', url: 'From link (URL)', today: "Today's date" };
 const PRE_SHORT = { none: '', browser: 'browser', instance: 'fixed', url: 'link', today: 'today' };
 const preFor = type => Object.fromEntries(Object.entries(PRE).filter(([k]) => (k !== 'today' || type === 'date') && (k !== 'url' || type !== 'image')));
-const DATEFMT = ['DD.MM.YYYY', 'YYYY-MM-DD', 'DD/MM/YYYY', 'MM/DD/YYYY'];
+const DATEFMT = ['YYYY-MM-DD', 'DD.MM.YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY']; // first entry: default for new fields (the server keeps DD.MM.YYYY for stored fields without a format)
 const keyOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 const linkOf = d => location.origin + '/d/' + d.slug;
+const slugOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 async function boot() {
   try { me = await api('GET', '/api/admin/me'); } catch (e) { return loginView(); }
@@ -769,7 +808,7 @@ async function listView() {
     chips.replaceChildren(...(tags.length ? ['', ...tags] : []).map(t => h('button', { class: 'chip' + (t === tag ? ' on' : ''), onclick: () => { tag = t; draw(); } }, t || 'All')));
     body.replaceChildren(...docs.filter(d => !tag || d.tags.includes(tag)).map(d => h('tr', {},
       h('td', {}, h('a', { href: '#doc/' + d.id }, d.title)), h('td', {}, d.tags.map(t => h('span', { class: 'tag' }, t))),
-      h('td', {}, d.fields), h('td', {}, d.listed ? 'Listed' : 'Link only'),
+      h('td', {}, d.fields), h('td', {}, (d.listed ? 'Listed' : 'Link only') + (d.protected ? ' · password' : '')),
       h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => copyText(linkOf(d)) }, 'Copy link'), h('a', { class: 'btn', href: '/d/' + d.slug, target: '_blank' }, 'Open'))))));
   }
   app.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, 'Documents'), h('button', { class: 'pri', onclick: () => file.click() }, 'Upload PDF'), file), chips,
@@ -781,14 +820,15 @@ async function listView() {
 async function settingsView() {
   const s = await api('GET', '/api/admin/settings');
   const title = h('input', { type: 'text', value: s.siteTitle }), purl = h('input', { type: 'url', value: s.printerUrl, placeholder: 'http://cups-host:631/printers/NAME' });
-  const pub = h('input', { type: 'checkbox', checked: s.publicPrint });
+  const pub = h('input', { type: 'checkbox', checked: s.publicPrint }), pbtn = h('input', { type: 'text', value: s.printButton, placeholder: 'Print at home', maxLength: 40 });
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nxt = h('input', { type: 'password', autocomplete: 'new-password' });
   app.append(h('h1', {}, 'Settings'), h('div', { class: 'panel', style: 'max-width:560px' },
     h('label', {}, 'Site title'), title,
     h('label', {}, 'Network printer (IPP / CUPS URL, optional)'), purl,
-    h('div', { class: 'hint' }, 'Adds a "Send to printer" button that prints on this printer from the server. The printer must accept PDF.'),
+    h('div', { class: 'hint' }, 'Adds a button to every form that prints on this printer from the server. The printer must accept PDF. Each document can switch the button off.'),
+    h('label', {}, 'Label of that button'), pbtn,
     h('label', { class: 'chk', style: 'margin-top:12px' }, pub, 'Let everyone with a document link use this printer (otherwise only while logged in as admin)'),
-    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked }); toast('Saved'); } catch (e) { fail(e); } } }, 'Save settings'))),
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value }); toast('Saved'); } catch (e) { fail(e); } } }, 'Save settings'))),
     h('h2', {}, 'Password'),
     me.envPassword ? h('p', { class: 'muted' }, 'The admin password is set through the ADMIN_PASSWORD environment variable.')
       : h('div', { class: 'panel', style: 'max-width:560px' }, h('label', {}, 'Current password'), cur, h('label', {}, 'New password (at least 8 characters)'), nxt,
@@ -857,6 +897,13 @@ async function editView(id) {
   const title = h('input', { type: 'text', value: d.title, oninput: mark }), desc = h('textarea', { rows: 2, value: d.description, oninput: mark });
   const tags = h('input', { type: 'text', value: d.tags.join(', '), placeholder: 'e.g. school, tax, club', oninput: mark }), listed = h('input', { type: 'checkbox', checked: d.listed, onchange: mark });
   const link = h('input', { type: 'text', readOnly: true, value: linkOf(d), onfocus: e => e.target.select() });
+  const readable = s => /^[a-z0-9-]+$/.test(s) ? s : ''; let slugInit = readable(d.slug); // random links are not shown as a name
+  const slugIn = h('input', { type: 'text', id: 'slugIn', value: slugInit, spellcheck: false, placeholder: 'empty = random link', oninput: () => { link.value = location.origin + '/d/' + (slugOf(slugIn.value) || '(random)'); mark(); } });
+  const allowPrint = h('input', { type: 'checkbox', checked: d.serverPrint !== false, onchange: mark });
+  let dropPw = false;
+  const pwIn = h('input', { type: 'text', autocomplete: 'off', spellcheck: false, placeholder: d.protected ? 'Password set — type a new one to change it' : 'No password', oninput: () => { dropPw = false; mark(); } });
+  const pwDrop = h('button', { class: 'small', style: d.protected ? '' : 'display:none', onclick: () => { dropPw = true; pwIn.value = ''; pwIn.placeholder = 'Password will be removed on save'; mark(); } }, 'Remove');
+  const afterSave = () => { link.value = linkOf(d); slugInit = readable(d.slug); slugIn.value = slugInit; pwIn.value = ''; dropPw = false; pwIn.placeholder = d.protected ? 'Password set — type a new one to change it' : 'No password'; pwDrop.style.display = d.protected ? '' : 'none'; };
   const fieldsBox = h('div'), propsBox = h('div', { id: 'fp' });
   const repl = h('input', { type: 'file', accept: 'application/pdf,.pdf', style: 'display:none', onchange: async () => {
     const f = repl.files[0]; if (!f) return;
@@ -866,13 +913,16 @@ async function editView(id) {
   } });
   async function save() {
     try {
-      d = await api('PUT', '/api/admin/docs/' + id, { title: title.value, description: desc.value, tags: tags.value.split(','), listed: listed.checked, fields: d.fields });
-      dirty = false; saveBtn.textContent = 'Saved'; saveBtn.disabled = true; side(); toast('Saved');
+      const body = { title: title.value, description: desc.value, tags: tags.value.split(','), listed: listed.checked, serverPrint: allowPrint.checked, fields: d.fields };
+      if (slugIn.value !== slugInit) body.slug = slugIn.value;
+      if (dropPw) body.password = ''; else if (pwIn.value) body.password = pwIn.value;
+      d = await api('PUT', '/api/admin/docs/' + id, body);
+      dirty = false; saveBtn.textContent = 'Saved'; saveBtn.disabled = true; afterSave(); side(); toast('Saved');
     } catch (e) { fail(e); }
   }
   function flist() {
     fieldsBox.replaceChildren(d.fields.length ? h('div', { class: 'flist' }, d.fields.map(f => h('div', { class: 'fitem' + (f.id === sel ? ' on' : ''), onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); } },
-      h('b', {}, f.label), f.type === 'static' ? h('span', { class: 'tag' }, 'fixed text') : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), h('span', { class: 'muted small' }, 'p' + f.page))))
+      h('b', {}, f.label), f.type === 'static' ? h('span', { class: 'tag' }, 'fixed text') : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page))))
       : h('p', { class: 'empty small' }, 'No fields yet. Double-click on the page where the text should go, or use "Add field".'));
   }
   function side() {
@@ -888,7 +938,9 @@ async function editView(id) {
       const was = f[prop]; f[prop] = s.value;
       if (prop === 'type' && (was === 'image' || s.value === 'image')) f.value = ''; // an image name and a text value are not interchangeable
       if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.prefill === 'url' && f.type === 'image') f.prefill = 'none';
-      if (f.type === 'static') { f.prefill = 'none'; f.required = false; }
+      if (prop === 'prefill' && (was === 'instance') !== (s.value === 'instance')) f.hidden = s.value === 'instance'; // fixed values are hidden on the form by default
+      if (f.type === 'static') { f.prefill = 'none'; f.required = false; f.hidden = false; }
+      if (f.hidden) f.required = false;
       mark(); side(); redraw().catch(fail); }); return s; };
     const fixed = f.type === 'static', isImg = f.type === 'image';
     const imgPick = h('input', { type: 'file', accept: 'image/png,image/jpeg', style: 'display:none', onchange: async () => {
@@ -912,7 +964,8 @@ async function editView(id) {
       f.prefill === 'browser' && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
       f.prefill === 'url' && h('div', { class: 'hint' }, 'Filled from the link, e.g. ' + linkOf(d) + '#' + f.key + '=value. Users get a "Copy link with values" button.'),
       f.prefill === 'today' && h('div', { class: 'hint' }, 'Set to the current date when the form opens. The user can still change it.'),
-      !fixed && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), 'Required'),
+      !fixed && !f.hidden && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), 'Required'),
+      !fixed && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.hidden }), 'hidden', el => el.checked, () => { if (f.hidden) f.required = false; side(); }), 'Hide on the form (still printed)'),
       h('div', { style: 'margin-top:12px' }, h('button', { class: 'danger', onclick: () => { d.fields = d.fields.filter(x => x !== f); sel = null; mark(); side(); redraw().catch(fail); } }, 'Remove field'))));
   }
 
@@ -927,10 +980,15 @@ async function editView(id) {
       h('div', {},
         h('div', { class: 'panel' }, h('label', { style: 'margin-top:0' }, 'Title'), title, h('label', {}, 'Description'), desc, h('label', {}, 'Tags (comma-separated)'), tags,
           h('label', { class: 'chk', style: 'margin-top:12px' }, listed, 'Show in the public document list'),
+          h('label', { class: 'chk', style: 'margin-top:8px' }, allowPrint, 'Allow printing on the network printer from this form'),
+          h('label', {}, 'Link name (optional)'), slugIn,
+          h('div', { class: 'hint' }, 'Letters, digits and dashes give a readable link such as /d/library-card. Leave it empty for a random, unguessable link. Changing it breaks links already handed out.'),
           h('label', {}, 'Direct link'), h('div', { class: 'row' }, h('div', { class: 'grow' }, link), h('button', { onclick: () => copyText(link.value) }, 'Copy')),
+          h('label', {}, 'Form password (optional)'), h('div', { class: 'row' }, h('div', { class: 'grow' }, pwIn), pwDrop),
+          h('div', { class: 'hint' }, 'Users must enter it once per browser before the form opens. Takes effect on save.'),
           h('div', { class: 'row', style: 'margin-top:12px' },
             h('button', { class: 'small', onclick: () => repl.click() }, 'Replace PDF'), repl,
-            h('button', { class: 'small', onclick: async () => { if (!confirm('Create a new link? The current link stops working.')) return; try { const r = await api('POST', '/api/admin/docs/' + id + '/link'); d.slug = r.slug; link.value = linkOf(d); side(); toast('New link created'); } catch (e) { fail(e); } } }, 'New link'),
+            h('button', { class: 'small', title: 'Replaces the link name with an unguessable random one', onclick: async () => { if (!confirm('Create a random link? The current link stops working.')) return; try { const r = await api('POST', '/api/admin/docs/' + id + '/link'); d.slug = r.slug; afterSave(); side(); toast('New link created'); } catch (e) { fail(e); } } }, 'Random link'),
             h('button', { class: 'small danger', onclick: async () => { if (!confirm('Delete "' + d.title + '" and its PDF?')) return; try { await api('DELETE', '/api/admin/docs/' + id); dirty = false; location.hash = ''; } catch (e) { fail(e); } } }, 'Delete'))),
         h('h2', {}, 'Fields'), fieldsBox, propsBox)));
   side(); await redraw();

@@ -16,6 +16,19 @@ test('keyOf normalises labels into safe keys', () => {
   assert.equal(app.keyOf('x'.repeat(100)).length, 40);
 });
 
+test('slugOf makes readable link names', () => {
+  assert.equal(app.slugOf('Library card request'), 'library-card-request');
+  assert.equal(app.slugOf('  Antrag: Schülerausweis (2026)  '), 'antrag-schulerausweis-2026');
+  assert.equal(app.slugOf('???'), '');
+  assert.equal(app.slugOf('a'.repeat(100)).length, 60);
+});
+
+test('hidden fields are never required; static fields are never hidden', () => {
+  const [a, b] = app.cleanFields([{ label: 'A', hidden: true, required: true }, { label: 'B', type: 'static', hidden: true, value: 'x' }], 1);
+  assert.equal(a.hidden, true); assert.equal(a.required, false);
+  assert.equal(b.hidden, false);
+});
+
 test('fmtDate reformats ISO dates and leaves other input alone', () => {
   assert.equal(app.fmtDate('2026-10-13', 'DD.MM.YYYY'), '13.10.2026');
   assert.equal(app.fmtDate('2026-10-13', 'MM/DD/YYYY'), '10/13/2026');

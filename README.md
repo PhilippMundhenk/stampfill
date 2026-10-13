@@ -35,9 +35,13 @@ build step. It is meant for a school office, a club, a small company, a househol
   on every copy and never shown to users as an input.
 - **Printing**: browser print (vector PDF on desktop Chromium, high-resolution page images
   everywhere else), PDF download, and server-side printing through IPP (CUPS or any printer
-  that accepts PDF).
-- **Sharing**: documents are reachable by an unguessable link, optionally listed on the public
-  index with tags and search. Links can be rotated.
+  that accepts PDF). The server-print button is called "Print at home" by default, can be renamed
+  in Settings, and can be switched off per document.
+- **Sharing**: documents get an unguessable random link; set a link name in the editor for a
+  readable one (`/d/library-card-request`). Documents can be listed on the public index with tags
+  and search, and can require a password before they open.
+- **Hidden fields**: any field can be hidden on the form while still being printed. Fields with a
+  fixed value are hidden by default.
 - **Unicode**: drop a TrueType font at `DATA_DIR/font.ttf` and all stamped text uses it.
 - **Small footprint**: single process, JSON file plus the uploaded PDFs on disk, around 50 MB
   resident memory. Pages and assets are served gzip-compressed from memory.
@@ -137,8 +141,9 @@ Keep the `:631` port in the URL and use the printer's IP address rather than its
 mDNS usually does not resolve inside a container, and a DHCP reservation keeps the address stable.
 If the printer answers with IPP status `0x040a` (document format not supported), print through a
 CUPS queue instead. By default only a
-logged-in admin sees "Send to printer"; the setting "Let everyone with a document link use this
-printer" opens it to all users, which only makes sense on a trusted network.
+logged-in admin sees the server-print button; the setting "Let everyone with a document link use
+this printer" opens it to all users, which only makes sense on a trusted network. The button's
+label is a setting ("Print at home" by default), and each document can disable it.
 
 ### Backups and upgrades
 
@@ -162,7 +167,7 @@ file already use it.
 | `/d/<link>` | Form for one document: fill, preview, print, download |
 | `/admin` | Admin interface |
 | `/healthz` | Liveness probe |
-| `/api/docs`, `/api/d/<link>`, `/api/d/<link>/render`, `/api/d/<link>/print` | Public JSON API used by the form |
+| `/api/docs`, `/api/d/<link>`, `/api/d/<link>/render`, `/api/d/<link>/print`, `/api/d/<link>/unlock` | Public JSON API used by the form |
 | `/api/login`, `/api/logout`, `/api/admin/...` | Admin API (session cookie) |
 
 Mutating requests must carry the header `X-Requested-With: stampfill`, which is the CSRF guard.

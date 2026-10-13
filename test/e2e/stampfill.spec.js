@@ -75,7 +75,7 @@ test('admin places fields by double-click and configures prefill modes', async (
     await admin.locator('#fp select').nth(0).selectOption(String(type));
     await admin.locator('#fp select').last().selectOption(String(pre));
     if (pre === 'instance') { if (type === 'date') await admin.fill('#fp input[type=date]', '1990-02-01'); else await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Bietigheim'); }
-    if (label === 'Full name') await admin.locator('#fp label.chk input').check();
+    if (label === 'Full name') await admin.locator('#fp label.chk input').first().check(); // Required
     await expect(admin.locator('.fitem')).toHaveCount(defs.indexOf(defs.find((d) => d[0] === label)) + 1);
   }
   await expect(admin.locator('.mk')).toHaveCount(7);
@@ -90,14 +90,18 @@ test('admin places fields by double-click and configures prefill modes', async (
   await admin.fill('#fp input[type=text] >> nth=0', 'Footer');
   await admin.locator('#fp select').nth(0).selectOption('static');
   await expect(admin.locator('#fp select')).toHaveCount(1); // no prefill select for fixed text
-  await expect(admin.locator('#fp label.chk')).toHaveCount(0); // no "required" either
+  await expect(admin.locator('#fp label.chk')).toHaveCount(0); // neither "required" nor "hide"
   await admin.fill('#fp textarea', 'Office copy - do not hand out');
   await expect(admin.locator('.fitem', { hasText: 'Footer' }).locator('.tag')).toHaveText('fixed text');
   await expect(admin.locator('.mk')).toHaveCount(8);
   // image fields never offer link prefill
   await admin.locator('.fitem', { hasText: 'Signature' }).click();
   await expect(admin.locator('#fp select').last().locator('option[value=url]')).toHaveCount(0);
+  // fixed values are hidden on the form by default; hidden fields cannot be required
   await admin.locator('.fitem', { hasText: 'Issued by' }).click();
+  await expect(admin.locator('.fitem', { hasText: 'Issued by' }).locator('.tag', { hasText: 'hidden' })).toHaveCount(1);
+  await expect(admin.locator('#fp label.chk', { hasText: 'Hide on the form' }).locator('input')).toBeChecked();
+  await expect(admin.locator('#fp label.chk', { hasText: 'Required' })).toHaveCount(0);
 });
 
 test('admin drags a marker and the coordinates follow', async () => {
@@ -119,12 +123,15 @@ test('admin saves metadata and gets a direct link', async () => {
   await admin.locator('label.chk input').first().check(); // listed in the public index
   await admin.locator('.panel textarea').first().fill('Sample request form for testing');
   await expect(admin.locator('button.pri')).toHaveText('Save changes');
+  await expect(admin.locator('input[readonly]')).toHaveValue(/\/d\/[\w-]{12,16}$/); // random by default
+  await admin.fill('#slugIn', 'Sample Request!');
+  await expect(admin.locator('input[readonly]')).toHaveValue('http://127.0.0.1:8099/d/sample-request');
   await admin.click('button.pri');
   await expect(admin.locator('button.pri')).toHaveText('Saved');
   await expect(admin.locator('button.pri')).toBeDisabled();
   await admin.waitForLoadState('networkidle'); await shot(admin, '2-editor', true);
   link = await admin.locator('input[readonly]').inputValue();
-  expect(link).toMatch(/^http:\/\/127\.0\.0\.1:8099\/d\/[\w-]+$/);
+  expect(link).toBe('http://127.0.0.1:8099/d/sample-request');
   // data survives a reload
   await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(8);
   await expect(admin.locator('input[placeholder^="e.g."]')).toHaveValue('school, demo');
@@ -133,6 +140,7 @@ test('admin saves metadata and gets a direct link', async () => {
 test('admin configures the network printer', async () => {
   await admin.goto('/admin#settings');
   await admin.fill('input[type=url]', 'http://127.0.0.1:6310/printers/Test');
+  await admin.fill('input[placeholder="Print at home"]', 'Print at school');
   await admin.locator('label.chk input').check();
   await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
   await shot(admin, '3-settings');
@@ -161,6 +169,9 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_reference')).toHaveValue('REF-4711');
   await expect(user.locator('#f_issued_by')).toHaveValue('Office Bietigheim');
+  await expect(user.locator('#f_issued_by')).toBeHidden(); // fixed value: carried but not shown
+  await expect(user.locator('#f_birthday')).toBeHidden();
+  await expect(user.locator('#f_full_name')).toBeVisible();
   await expect(user.locator('#f_date')).toHaveValue(TODAY);
   await expect(user.locator('#f_birthday')).toHaveValue('1985-12-24'); // from the link, normalised for the date input
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
@@ -182,7 +193,7 @@ test('form prefills from the link and from fixed values, validates required fiel
 
 test('server print sends an IPP job with the rendered PDF', async () => {
   fs.rmSync(IPP_OUT, { recursive: true, force: true });
-  await user.click('text=Send to printer');
+  await user.click('text=Print at school'); // label from settings
   await expect(user.locator('#toast')).toHaveText('Sent to the printer (job 42)');
   const job = JSON.parse(fs.readFileSync(path.join(IPP_OUT, 'job.json'), 'utf8'));
   expect(job.attrs['document-format']).toBe('application/pdf');
@@ -263,10 +274,32 @@ test('form follows the dark colour scheme', async () => {
   await ctx.close();
 });
 
+test('admin can switch off network printing and protect the form with a password', async () => {
+  await admin.goto('/admin' + docHash); await expect(admin.locator('.wrap canvas')).toBeVisible();
+  await admin.locator('label.chk', { hasText: 'Allow printing' }).locator('input').uncheck();
+  await admin.fill('input[placeholder="No password"]', 'open-sesame');
+  await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
+  await expect(admin.locator('input[placeholder^="Password set"]')).toBeVisible();
+  // a fresh visitor must unlock first
+  const ctx = await browser.newContext({ baseURL: 'http://127.0.0.1:8099' });
+  const v = track(await ctx.newPage(), 'visitor');
+  await v.goto(link); await expect(v.getByText('This form is protected')).toBeVisible();
+  await v.fill('input[type=password]', 'wrong'); await v.click('button.pri'); await expect(v.locator('#toast')).toHaveText('Wrong password');
+  await v.fill('input[type=password]', 'open-sesame'); await v.click('button.pri');
+  await expect(v.locator('.preview canvas')).toBeVisible();
+  await expect(v.locator('button', { hasText: 'Print at school' })).toHaveCount(0); // switched off for this form
+  await v.reload(); await expect(v.locator('.preview canvas')).toBeVisible(); // stays unlocked in this browser
+  await v.goto('/'); await expect(v.locator('.card .tag', { hasText: 'password' })).toHaveCount(1);
+  await ctx.close();
+  // the existing user context has no unlock cookie yet
+  await user.goto(link); await expect(user.getByText('This form is protected')).toBeVisible();
+  await user.fill('input[type=password]', 'open-sesame'); await user.click('button.pri'); await expect(user.locator('.preview canvas')).toBeVisible();
+});
+
 test('admin rotates the link and deletes the document', async () => {
   admin.on('dialog', (d) => d.accept());
   await admin.goto('/admin' + docHash); await expect(admin.locator('.wrap canvas')).toBeVisible();
-  await admin.click('text=New link');
+  await admin.click('text=Random link');
   await expect(admin.locator('#toast')).toHaveText('New link created');
   const fresh = await admin.locator('input[readonly]').inputValue(); expect(fresh).not.toBe(link);
   await user.goto(link); await expect(user.getByText('Document not found')).toBeVisible();

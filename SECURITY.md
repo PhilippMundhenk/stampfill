@@ -12,8 +12,9 @@ or contact the maintainer directly. You should get a first response within a wee
   The admin session cookie is only marked `Secure` when the proxy sends `X-Forwarded-Proto: https`.
 - Set `TRUST_PROXY=1` only when a reverse proxy is in front of the service, otherwise clients can
   spoof their IP and bypass the login rate limit.
-- Anyone who knows a document link can render PDFs with that template. Treat links as
-  capability URLs and rotate them from the admin interface ("New link") if they leak.
+- Document links are random and unguessable by default. A readable link name makes the link
+  guessable; combine it with a form password when the document is not meant for everyone. A form
+  password is checked on every public endpoint, not only in the page.
 - "Let everyone with a document link use this printer" sends print jobs on behalf of anonymous
   users. Keep it off unless the instance is only reachable on a trusted network.
 - The service has no accounts beyond the single admin password. Pick a long one, or let the
