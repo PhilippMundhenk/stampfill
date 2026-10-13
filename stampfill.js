@@ -184,6 +184,19 @@ function cleanFields(list, pages) {
     };
   });
 }
+// per-page rotation in degrees (any angle, e.g. to straighten a skewed scan), applied when rendering
+const cleanRotation = (r, pages) => Array.from({ length: pages }, (_, i) => Math.round(num(Array.isArray(r) ? r[i] : 0, 0, -180, 180) * 10) / 10 || 0);
+async function applyRotation(pdf, rotation) {
+  for (let i = 0; i < pdf.getPageCount(); i++) {
+    const angle = rotation[i]; if (!angle) continue;
+    const page = pdf.getPage(i), { width: W, height: H } = page.getSize(), total = angle + page.getRotation().angle;
+    const swap = Math.abs(((total % 180) + 180) % 180 - 90) < 1e-9, nw = swap ? H : W, nh = swap ? W : H, t = total * Math.PI / 180;
+    const emb = await pdf.embedPage(page); // the old page becomes a form XObject drawn rotated around the centre of a fresh page
+    const fresh = pdf.insertPage(i, [nw, nh]);
+    fresh.drawPage(emb, { x: nw / 2 - (W / 2) * Math.cos(t) + (H / 2) * Math.sin(t), y: nh / 2 - (W / 2) * Math.sin(t) - (H / 2) * Math.cos(t), width: W, height: H, rotate: degrees(total) });
+    pdf.removePage(i + 1);
+  }
+}
 const cleanTags = (t) => [...new Set((Array.isArray(t) ? t : []).map((x) => str(x, 30).trim()).filter(Boolean))].slice(0, 20);
 const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password });
 const publicDoc = (d, req) => ({
@@ -202,8 +215,9 @@ function fmtDate(v, fmt) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v); if (!m) return v;
   return fmt.replace('YYYY', m[1]).replace('MM', m[2]).replace('DD', m[3]);
 }
-async function renderPdf(doc, fields, values) {
+async function renderPdf(doc, fields, values, rotation = doc.rotation) {
   const pdf = await PDFDocument.load(fs.readFileSync(pdfPath(doc.id)));
+  if (rotation && rotation.some(Boolean)) await applyRotation(pdf, rotation);
   let font;
   if (fontkit && fs.existsSync(FONT)) { pdf.registerFontkit(fontkit); font = await pdf.embedFont(fs.readFileSync(FONT), { subset: true }); }
   else font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -365,7 +379,7 @@ async function route(req, res) {
     if (m === 'POST') {
       const buf = await readBody(req, MAX_PDF), pages = await inspectPdf(buf);
       const title = str(url.searchParams.get('title'), 120).trim() || 'Untitled';
-      const doc = { id: rid(8), slug: rid(10), title, description: '', tags: [], listed: false, serverPrint: true, password: null, pages, fields: [], created: Date.now(), updated: Date.now() };
+      const doc = { id: rid(8), slug: rid(10), title, description: '', tags: [], listed: false, serverPrint: true, password: null, pages, rotation: cleanRotation([], pages), fields: [], created: Date.now(), updated: Date.now() };
       fs.writeFileSync(pdfPath(doc.id), buf); db.docs.unshift(doc); save();
       return json(res, 200, adminDoc(doc));
     }
@@ -386,7 +400,8 @@ async function route(req, res) {
           if (pw && pw.length < 4) throw new HttpErr(400, 'The form password needs at least 4 characters');
           doc.password = pw ? hashPw(pw) : null;
         }
-        Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, serverPrint: b.serverPrint !== false, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
+        Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, serverPrint: b.serverPrint !== false,
+          rotation: b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
         save(); return json(res, 200, adminDoc(doc));
       }
       if (m === 'DELETE') {
@@ -397,12 +412,12 @@ async function route(req, res) {
     }
     if (a[2] === '/pdf' && m === 'PUT') {
       const buf = await readBody(req, MAX_PDF); doc.pages = await inspectPdf(buf);
-      fs.writeFileSync(pdfPath(doc.id), buf); doc.fields = cleanFields(doc.fields, doc.pages); doc.updated = Date.now(); save();
+      fs.writeFileSync(pdfPath(doc.id), buf); doc.rotation = cleanRotation([], doc.pages); doc.fields = cleanFields(doc.fields, doc.pages); doc.updated = Date.now(); save();
       return json(res, 200, adminDoc(doc));
     }
     if (a[2] === '/render' && m === 'POST') { // preview of unsaved field layout with sample values
       const b = await readJson(req), fields = cleanFields(b.fields, doc.pages);
-      return send(res, 200, await renderPdf(doc, fields, b.values ? cleanValues(b.values) : sampleValues(fields)), 'application/pdf');
+      return send(res, 200, await renderPdf(doc, fields, b.values ? cleanValues(b.values) : sampleValues(fields), b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation), 'application/pdf');
     }
     if (a[2] === '/link' && m === 'POST') { doc.slug = rid(10); save(); return json(res, 200, adminDoc(doc)); }
   }
@@ -417,7 +432,7 @@ function migrate() {
   for (const doc of db.docs) {
     doc.description = str(doc.description, 500); doc.tags = cleanTags(doc.tags); doc.listed = !!doc.listed;
     doc.pages = Math.max(1, Math.round(num(doc.pages, 1, 1, 10000)));
-    doc.fields = cleanFields(doc.fields, doc.pages);
+    doc.fields = cleanFields(doc.fields, doc.pages); doc.rotation = cleanRotation(doc.rotation, doc.pages);
     if (doc.serverPrint === undefined) doc.serverPrint = true; if (doc.password === undefined) doc.password = null;
   }
   pruneImages(); save();
@@ -444,7 +459,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, migrate, keyOf, slugOf, fmtDate, toIso, cleanPrefill, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, migrate, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -844,16 +859,20 @@ async function editView(id) {
   // ---- stage: live PDF preview with draggable field markers
   const canvasBox = h('div'), ov = h('div', { class: 'ov' }), wrap = h('div', { class: 'wrap' }, canvasBox, ov);
   const pageLbl = h('span', { class: 'muted' });
+  const rotIn = h('input', { type: 'number', id: 'rotIn', step: 0.5, min: -180, max: 180, value: 0, title: 'Rotation of this page in degrees', style: 'width:84px' });
+  const setRot = v => { v = Math.max(-180, Math.min(180, Math.round((+v || 0) * 10) / 10)); d.rotation[pageNo - 1] = v; rotIn.value = v; mark(); redraw().catch(fail); };
+  rotIn.addEventListener('change', () => setRot(rotIn.value));
+  const rotBy = step => { let v = (d.rotation[pageNo - 1] || 0) + step; if (v > 180) v -= 360; if (v < -180) v += 360; setRot(v); };
   const stage = h('div', { class: 'stage' }, wrap);
   async function redraw() {
-    const my = ++seq, buf = await api('POST', '/api/admin/docs/' + id + '/render', { fields: d.fields }, true);
+    const my = ++seq, buf = await api('POST', '/api/admin/docs/' + id + '/render', { fields: d.fields, rotation: d.rotation }, true);
     if (my !== seq) return;
     const pdf = await openPdf(buf), c = h('canvas'), w = Math.max(280, stage.clientWidth - 34);
     pageNo = Math.min(pageNo, pdf.numPages);
     const v = await drawPage(pdf, pageNo, c, w);
     if (my !== seq) return;
     vp = v; wrap.style.width = w + 'px'; canvasBox.replaceChildren(c);
-    pageLbl.textContent = 'Page ' + pageNo + ' of ' + pdf.numPages; markers();
+    pageLbl.textContent = 'Page ' + pageNo + ' of ' + pdf.numPages; rotIn.value = d.rotation[pageNo - 1] || 0; markers();
   }
   const later = () => { clearTimeout(timer); timer = setTimeout(() => redraw().catch(fail), 200); };
   function markers() {
@@ -908,12 +927,12 @@ async function editView(id) {
   const repl = h('input', { type: 'file', accept: 'application/pdf,.pdf', style: 'display:none', onchange: async () => {
     const f = repl.files[0]; if (!f) return;
     if (dirty && !confirm('Replacing the PDF discards unsaved changes. Continue?')) { repl.value = ''; return; }
-    try { d = await api('PUT', '/api/admin/docs/' + id + '/pdf', f); dirty = false; saveBtn.textContent = 'Saved'; saveBtn.disabled = true; side(); await redraw(); toast('PDF replaced'); } catch (e) { fail(e); }
+    try { d = await api('PUT', '/api/admin/docs/' + id + '/pdf', f); dirty = false; saveBtn.textContent = 'Saved'; saveBtn.disabled = true; pageNo = 1; side(); await redraw(); toast('PDF replaced'); } catch (e) { fail(e); }
     repl.value = '';
   } });
   async function save() {
     try {
-      const body = { title: title.value, description: desc.value, tags: tags.value.split(','), listed: listed.checked, serverPrint: allowPrint.checked, fields: d.fields };
+      const body = { title: title.value, description: desc.value, tags: tags.value.split(','), listed: listed.checked, serverPrint: allowPrint.checked, rotation: d.rotation, fields: d.fields };
       if (slugIn.value !== slugInit) body.slug = slugIn.value;
       if (dropPw) body.password = ''; else if (pwIn.value) body.password = pwIn.value;
       d = await api('PUT', '/api/admin/docs/' + id, body);
@@ -975,6 +994,7 @@ async function editView(id) {
     h('div', { class: 'editor' },
       h('div', {}, h('div', { class: 'row', style: 'margin-bottom:8px' },
         h('button', { onclick: () => { if (pageNo > 1) { pageNo--; redraw().catch(fail); } } }, '‹'), pageLbl, h('button', { onclick: () => { if (pageNo < d.pages) { pageNo++; redraw().catch(fail); } } }, '›'),
+        h('span', { class: 'muted small', style: 'margin-left:10px' }, 'Rotate'), h('button', { class: 'small', title: 'Rotate 90° counter-clockwise', onclick: () => rotBy(-90) }, '⟲'), rotIn, h('button', { class: 'small', title: 'Rotate 90° clockwise', onclick: () => rotBy(90) }, '⟳'),
         h('span', { class: 'grow' }), h('span', { class: 'muted small' }, 'Double-click the page to add a field · drag to move'),
         h('button', { onclick: () => { const c = vp ? vp.convertToPdfPoint(vp.width / 2, vp.height / 3) : [72, 700]; addField(c[0], c[1]); } }, 'Add field')), stage),
       h('div', {},

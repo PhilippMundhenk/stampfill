@@ -24,6 +24,8 @@ build step. It is meant for a school office, a club, a small company, a househol
 
 - **Field editor**: double-click on the rendered page to add a field, drag to move it. Text,
   multi-line text, date (four formats) and checkbox fields. Wrap width, font size, required flag.
+- **Straighten and rotate**: each page of the template can be rotated by quarter turns or by
+  single degrees (for skewed scans). The upload stays untouched; the angle is applied on render.
 - **Prefill** per field: remembered in the user's browser, fixed for this instance, carried in
   the link (`/d/<link>#key=value`), or today's date for date fields. Users get a "Copy link with
   values" button.

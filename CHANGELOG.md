@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Page rotation per page in the editor: quarter turns and arbitrary angles (e.g. 2.5°) to
+  straighten skewed scans, stored with the document and applied on render.
 - Optional readable link name per document (`/d/library-card-request`); links stay random
   unless a name is set.
 - Optional password per document, checked on every public endpoint; users unlock once per browser.

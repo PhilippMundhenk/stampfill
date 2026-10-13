@@ -29,6 +29,25 @@ test('hidden fields are never required; static fields are never hidden', () => {
   assert.equal(b.hidden, false);
 });
 
+test('cleanRotation gives one clamped angle per page', () => {
+  assert.deepEqual(app.cleanRotation([3.26, 'x', 400, -500], 3), [3.3, 0, 180]);
+  assert.deepEqual(app.cleanRotation(undefined, 2), [0, 0]);
+  assert.deepEqual(app.cleanRotation('nope', 1), [0]);
+});
+
+test('renderPdf rotates pages by any angle; quarter turns swap the page size', async () => {
+  fs.mkdirSync(path.join(tmp, 'pdfs'), { recursive: true });
+  fs.copyFileSync(SAMPLE, path.join(tmp, 'pdfs', 'rot.pdf'));
+  const { PDFDocument } = require('pdf-lib');
+  const size = async (rotation) => { const p = await PDFDocument.load(await app.renderPdf({ id: 'rot', rotation }, app.cleanFields([{ label: 'A', x: 50, y: 50 }], 1), { a: 'x' })); return [p.getPageCount(), p.getPage(0).getWidth(), p.getPage(0).getHeight()]; };
+  assert.deepEqual(await size([0]), [1, 595, 842]);
+  assert.deepEqual(await size([2.5]), [1, 595, 842], 'small angles keep the page size');
+  assert.deepEqual(await size([90]), [1, 842, 595]);
+  assert.deepEqual(await size([-90]), [1, 842, 595]);
+  assert.deepEqual(await size([180]), [1, 595, 842]);
+  assert.deepEqual(await size(undefined), [1, 595, 842]);
+});
+
 test('fmtDate reformats ISO dates and leaves other input alone', () => {
   assert.equal(app.fmtDate('2026-10-13', 'DD.MM.YYYY'), '13.10.2026');
   assert.equal(app.fmtDate('2026-10-13', 'MM/DD/YYYY'), '10/13/2026');

@@ -88,6 +88,16 @@ test('upload, edit and render a document', async () => {
 });
 
 let imgName;
+test('page rotation is stored per page, previewable unsaved, and reset when the PDF is replaced', async () => {
+  const { PDFDocument } = require('pdf-lib');
+  let r = await call('POST', '/api/admin/docs/' + doc.id + '/render', { fields: doc.fields, rotation: [90] }); assert.equal(r.status, 200);
+  let p = await PDFDocument.load(Buffer.from(await r.arrayBuffer())); assert.equal(p.getPage(0).getWidth(), 842, 'unsaved rotation applies to the preview');
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, rotation: [90] })).json(); assert.deepEqual(doc.rotation, [90]);
+  r = await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });
+  p = await PDFDocument.load(Buffer.from(await r.arrayBuffer())); assert.equal(p.getPage(0).getWidth(), 842, 'the public form renders the rotated page');
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id + '/pdf', SAMPLE)).json(); assert.deepEqual(doc.rotation, [0], 'a new PDF starts unrotated');
+});
+
 test('image fields: default image upload, public delivery, render with a data URL', async () => {
   assert.equal((await call('POST', '/api/admin/images', Buffer.from('GIF89a nope'))).status, 400);
   let r = await call('POST', '/api/admin/images', PNG, { 'Content-Type': 'image/png' }); assert.equal(r.status, 200);

@@ -59,6 +59,22 @@ test('admin logs in and uploads a PDF', async () => {
   docHash = await admin.evaluate(() => location.hash); expect(docHash).toMatch(/^#doc\/[\w-]+$/);
 });
 
+test('admin can rotate a page by quarter turns and by single degrees', async () => {
+  const dims = async () => { const b = await admin.locator('.wrap canvas').boundingBox(); if (!b) throw new Error('no canvas'); return [Math.round(b.width), Math.round(b.height)]; };
+  const [w0, h0] = await dims(); expect(h0).toBeGreaterThan(w0); // portrait
+  await admin.click('button[title="Rotate 90° clockwise"]');
+  await expect.poll(async () => { const [w, h] = await dims(); return w > h; }).toBe(true); // landscape now
+  await expect(admin.locator('#rotIn')).toHaveValue('90');
+  await admin.fill('#rotIn', '2.5'); await admin.locator('#rotIn').dispatchEvent('change');
+  await expect.poll(async () => { const [w, h] = await dims(); return h > w; }).toBe(true); // small angle: portrait again
+  await expect(admin.locator('button.pri')).toHaveText('Save changes');
+  await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
+  await admin.reload(); await expect(admin.locator('.wrap canvas')).toBeVisible();
+  await expect(admin.locator('#rotIn')).toHaveValue('2.5'); // persisted
+  await admin.fill('#rotIn', '0'); await admin.locator('#rotIn').dispatchEvent('change');
+  await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
+});
+
 test('admin places fields by double-click and configures prefill modes', async () => {
   const box = await admin.locator('.ov').boundingBox(); if (!box) throw new Error('no overlay');
   const sc = box.width / 595; // sample form is A4 portrait, 595 x 842 pt
