@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 # Dependencies are installed on the build platform (not under QEMU emulation when cross-building for
 # arm64): every runtime dependency is pure JavaScript, so node_modules is identical on all platforms.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS deps
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
 LABEL org.opencontainers.image.title="stampfill" \
       org.opencontainers.image.description="Stamp text onto PDF templates from a web form, then print or download the result" \
       org.opencontainers.image.source="https://github.com/PhilippMundhenk/stampfill" \
