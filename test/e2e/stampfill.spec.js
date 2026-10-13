@@ -212,8 +212,8 @@ test('admin configures the network printer', async () => {
   await admin.fill('input[autocomplete=current-password]', PASSWORD);
   await admin.click('text=Change password'); await expect(admin.locator('#toast')).toHaveText('Password changed');
   await cov.snapshot(admin); // "Log out" reloads the page in place
-  await admin.click('text=Log out'); await expect(admin.locator('input[type=password]')).toBeVisible();
-  await admin.fill('input[type=password]', 'test-pass-456'); await admin.click('button.pri');
+  await admin.click('text=Log out'); await expect(admin.locator('form.login input[type=password]')).toBeVisible(); // the settings page has password inputs too until the reload lands
+  await admin.fill('form.login input[type=password]', 'test-pass-456'); await admin.click('form.login button.pri');
   await expect(admin.locator('#nav')).toContainText('Settings');
   await admin.goto('/admin#'); await admin.reload();
   await expect(admin.locator('table')).toBeVisible();
