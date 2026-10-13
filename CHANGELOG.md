@@ -20,6 +20,8 @@ All notable changes to this project are documented here. The format follows
   `ADMIN_PASSWORD_FILE`; an append-only audit log.
 
 ### Added
+- Field groups (a group name becomes a heading on the form) and reordering of fields by
+  drag-and-drop or arrow buttons in the editor; the list order is the form order.
 - Interface in German, Turkish, Arabic (right-to-left), Russian, Ukrainian, Greek and Polish, following
   the browser language with a switcher in the header and an instance default in Settings. Non-Latin
   values print with a bundled TrueType fallback font.

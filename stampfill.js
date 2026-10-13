@@ -236,7 +236,7 @@ function cleanFields(list, pages) {
     const prefill = cleanPrefill(type, f.prefill);
     const dateFormat = DATEFMT.includes(f.dateFormat) ? f.dateFormat : DATEFMT[0];
     return {
-      id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key,
+      id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key, group: str(f.group, 40).trim(),
       type, hidden: type !== 'static' && !!f.hidden, required: type !== 'static' && !f.hidden && !!f.required,
       page: Math.round(num(f.page, 1, 1, pages)), x: +num(f.x, 50, -5000, 5000).toFixed(1), y: +num(f.y, 50, -5000, 5000).toFixed(1),
       size: num(f.size, 11, 4, 72), maxWidth: IMG(type) ? (num(f.maxWidth, 0, 0, 5000) > 0 ? num(f.maxWidth, 0, 5, 5000) : type === 'signature' ? 160 : 120) : num(f.maxWidth, 0, 0, 5000), // images: always an explicit width, at least 5 pt
@@ -263,7 +263,7 @@ const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password })
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
   serverPrint: !!db.settings.printerUrl && d.serverPrint !== false && (db.settings.publicPrint || isAdmin(req)), printLabel: db.settings.printButton,
-  fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, type: f.type, required: f.required, hidden: f.hidden, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
+  fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, group: f.group, type: f.type, required: f.required, hidden: f.hidden, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
 });
 async function inspectPdf(buf) {
   if (buf.length < 5 || buf.subarray(0, 5).toString() !== '%PDF-') throw new HttpErr(400, 'That file is not a PDF');
@@ -684,6 +684,10 @@ details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([o
 .rz{position:absolute;right:-7px;width:12px;height:12px;background:#e8590c;border:2px solid #fff;border-radius:3px;box-shadow:0 0 0 1px #e8590c;z-index:3;touch-action:none}
 .rz.br{bottom:-7px;cursor:nwse-resize}.rz.tr{top:-7px;cursor:nesw-resize}
 .flist{border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;background:var(--card)}
+.fgroup{padding:5px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);background:var(--bg);border-bottom:1px solid var(--line)}
+h2.fgroup{padding:0;background:none;border:0;margin:18px 0 2px;font-size:12px}
+.fitem.over{box-shadow:inset 0 2px 0 var(--acc)}.grip{color:var(--mut);cursor:grab;font-size:13px;letter-spacing:-3px;user-select:none}
+.ord{display:flex;gap:2px}.ord button.tiny{padding:0 5px;font-size:9px;line-height:18px;box-shadow:none}
 .fitem{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}.fitem:hover{background:var(--bg)}
 .fitem:last-child{border-bottom:0}.fitem.on{background:var(--acc-soft);box-shadow:inset 3px 0 0 var(--acc)}.fitem b{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:0 8px}
@@ -839,7 +843,10 @@ async function formView() {
   const toIso = v => { const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(String(v).trim()); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : v; };
 
   const form = h('div', { class: 'panel' });
+  let lastGroup = '';
+  const groupHead = f => { const g = f.hidden ? lastGroup : (f.group || ''); if (g === lastGroup) return; lastGroup = g; if (g) form.append(h('h2', { class: 'fgroup' }, g)); };
   for (const f of doc.fields) {
+    groupHead(f);
     if (IMG(f.type)) { form.append(rows[f.key] = imageRow(f)); continue; }
     const inp = inputs[f.key] = f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : f.type === 'date' ? 'date' : 'text' });
     inp.id = 'f_' + f.key;
@@ -1173,7 +1180,7 @@ async function editView(id) {
   function addField(x, y) {
     let n = d.fields.length + 1, label = t('Field ') + n;
     while (d.fields.some(f => f.key === keyOf(label))) label = t('Field ') + (++n);
-    const f = { id: 'f' + Math.random().toString(36).slice(2, 10), key: keyOf(label), label, type: 'text', required: false, hidden: false, page: pageNo, x: Math.round(x), y: Math.round(y), size: 11, maxWidth: 0, height: 0, dateFormat: DATEFMT[0], prefill: 'none', value: '' };
+    const f = { id: 'f' + Math.random().toString(36).slice(2, 10), key: keyOf(label), label, group: (field() || {}).group || '', type: 'text', required: false, hidden: false, page: pageNo, x: Math.round(x), y: Math.round(y), size: 11, maxWidth: 0, height: 0, dateFormat: DATEFMT[0], prefill: 'none', value: '' };
     d.fields.push(f); sel = f.id; mark(); side(); redraw().catch(fail);
     const first = $('#fp input'); if (first) { first.focus(); first.select(); }
   }
@@ -1209,10 +1216,28 @@ async function editView(id) {
       dirty = false; saveBtn.textContent = t('Saved'); saveBtn.disabled = true; afterSave(); side(); toast(t('Saved'));
     } catch (e) { fail(e); }
   }
-  function flist() {
-    fieldsBox.replaceChildren(d.fields.length ? h('div', { class: 'flist' }, d.fields.map(f => h('div', { class: 'fitem' + (f.id === sel ? ' on' : ''), onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); } },
-      h('b', {}, f.label), f.type === 'static' ? h('span', { class: 'tag' }, t('fixed text')) : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page))))
-      : h('p', { class: 'empty small' }, t('No fields yet. Double-click on the page where the text should go, or use "Add field".')));
+  let dragId = null;
+  function move(f, delta) { const i = d.fields.indexOf(f), j = i + delta; if (j < 0 || j >= d.fields.length) return; d.fields.splice(i, 1); d.fields.splice(j, 0, f); mark(); flist(); }
+  function flist() { // the order here is the order on the form; groups become headings there
+    if (!d.fields.length) { fieldsBox.replaceChildren(h('p', { class: 'empty small' }, t('No fields yet. Double-click on the page where the text should go, or use "Add field".'))); return; }
+    const items = []; let last = null;
+    d.fields.forEach((f, i) => {
+      const g = f.group || '';
+      if (g !== last) { last = g; if (g) items.push(h('div', { class: 'fgroup' }, g)); }
+      const it = h('div', { class: 'fitem' + (f.id === sel ? ' on' : ''), draggable: true,
+        onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); },
+        ondragstart: e => { dragId = f.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', f.id); },
+        ondragover: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; it.classList.add('over'); },
+        ondragleave: () => it.classList.remove('over'),
+        ondrop: e => { e.preventDefault(); it.classList.remove('over'); const from = d.fields.findIndex(x => x.id === dragId); dragId = null; if (from < 0 || d.fields[from] === f) return; const [mv] = d.fields.splice(from, 1); d.fields.splice(d.fields.indexOf(f), 0, mv); mark(); flist(); } },
+        h('span', { class: 'grip', title: t('Drag to reorder') }, '⋮⋮'), h('b', {}, f.label),
+        f.type === 'static' ? h('span', { class: 'tag' }, t('fixed text')) : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page),
+        h('span', { class: 'ord' },
+          h('button', { class: 'tiny', title: t('Move up'), disabled: i === 0, onclick: e => { e.stopPropagation(); move(f, -1); } }, '▲'),
+          h('button', { class: 'tiny', title: t('Move down'), disabled: i === d.fields.length - 1, onclick: e => { e.stopPropagation(); move(f, 1); } }, '▼')));
+      items.push(it);
+    });
+    fieldsBox.replaceChildren(h('div', { class: 'flist' }, items));
   }
   function side() {
     flist();
@@ -1221,6 +1246,8 @@ async function editView(id) {
     const bind = (el, prop, conv, after) => { el.addEventListener('input', () => { f[prop] = conv ? conv(el) : el.value; mark(); later(); if (after) after(); }); return el; };
     const numIn = (prop, step, min) => bind(h('input', { type: 'number', step, min, value: f[prop] }), prop, el => el.value === '' ? 0 : +el.value, markers);
     const keyIn = bind(h('input', { type: 'text', value: f.key }), 'key', el => keyOf(el.value));
+    const groupIn = bind(h('input', { type: 'text', value: f.group || '', placeholder: t('e.g. Applicant, Child, Office use') }), 'group', el => el.value.slice(0, 40), flist);
+    groupIn.setAttribute('list', 'groups'); // suggestions from the other fields' groups
     keyIn.addEventListener('change', () => { keyIn.value = f.key; }); // show the normalised key once editing is done
     const labelIn = h('input', { type: 'text', value: f.label });
     labelIn.addEventListener('input', () => { const auto = f.key === keyOf(f.label); f.label = labelIn.value; if (auto) { f.key = keyOf(f.label); keyIn.value = f.key; } mark(); later(); flist(); });
@@ -1239,6 +1266,7 @@ async function editView(id) {
     } });
     propsBox.replaceChildren(h('h2', {}, t('Selected field')), h('div', { class: 'panel' },
       h('label', { style: 'margin-top:0' }, fixed ? t('Label (only shown in this editor)') : t('Label (shown on the form)')), labelIn,
+      h('label', {}, t('Group (optional)')), groupIn, h('datalist', { id: 'groups' }, [...new Set(d.fields.map(x => x.group).filter(Boolean))].map(g => h('option', { value: g }))),
       h('div', { class: 'g2' }, h('div', {}, h('label', {}, t('Type')), sel2('type', TYPES)), h('div', {}, h('label', {}, t('Key (for links)')), keyIn)),
       f.type === 'date' && h('div', {}, h('label', {}, t('Date format')), sel2('dateFormat', Object.fromEntries(DATEFMT.map(x => [x, x])))),
       h('div', { class: 'g4' }, h('div', {}, h('label', {}, t('Page')), numIn('page', 1, 1)), h('div', {}, h('label', {}, t('X (pt)')), numIn('x', 0.5)), h('div', {}, h('label', {}, t('Y (pt)')), numIn('y', 0.5)), !isImg && h('div', {}, h('label', {}, t('Size')), numIn('size', 0.5, 4))),

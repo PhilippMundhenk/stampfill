@@ -49,6 +49,8 @@ The screenshots come from a demo instance that `npm run screenshots` builds from
   and search, and can require a password before they open.
 - **Hidden fields**: any field can be hidden on the form while still being printed. Fields with a
   fixed value are hidden by default.
+- **Order and groups**: fields appear on the form in the order of the editor's list, which can be
+  rearranged by drag-and-drop or with arrow buttons; a group name turns into a heading on the form.
 - **Unicode**: drop a TrueType font at `DATA_DIR/font.ttf` and all stamped text uses it.
 - **Small footprint**: single process, JSON file plus the uploaded PDFs on disk, around 50 MB
   resident memory. Pages and assets are served gzip-compressed from memory.

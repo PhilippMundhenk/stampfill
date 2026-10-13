@@ -104,7 +104,7 @@ test('admin places fields by double-click and configures prefill modes', async (
   }
   await expect(admin.locator('.mk')).toHaveCount(8);
   // keys are derived from labels
-  await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('agree'); // the last field placed
+  await expect(admin.locator('#fp input[type=text]').nth(2)).toHaveValue('agree'); // the last field placed
   // "today" is only offered for date fields
   await expect(admin.locator('#fp select').last().locator('option[value=today]')).toHaveCount(0);
   await admin.locator('.fitem', { hasText: 'Date' }).click();
@@ -145,8 +145,8 @@ test('admin places fields by double-click and configures prefill modes', async (
   await admin.click('text=Add field');
   await admin.locator('#fp select').nth(0).selectOption('date');
   await admin.locator('#fp select').nth(1).selectOption('DD/MM/YYYY');
-  await admin.fill('#fp input[type=text] >> nth=1', 'Custom Key'); await admin.keyboard.press('Tab');
-  await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('custom_key'); // normalised on blur
+  await admin.fill('#fp input[type=text] >> nth=2', 'Custom Key'); await admin.keyboard.press('Tab');
+  await expect(admin.locator('#fp input[type=text]').nth(2)).toHaveValue('custom_key'); // normalised on blur
   await expect(admin.locator('.mk')).toHaveCount(11);
   await admin.click('text=Remove field');
   await expect(admin.locator('.mk')).toHaveCount(10);
@@ -173,6 +173,24 @@ test('admin drags a marker and the coordinates follow', async () => {
   await expect.poll(async () => Number(await yIn.inputValue())).not.toBe(y0);
   const y1 = Number(await yIn.inputValue());
   expect(Math.abs((y0 - y1) - 30 / sc)).toBeLessThan(2); // moved 30 CSS px down = 30/sc points lower on the page
+});
+
+test('fields can be grouped and reordered', async () => {
+  const setGroup = async (label, group) => { await admin.locator('.fitem', { hasText: label }).click(); await admin.fill('#fp input[placeholder^="e.g. Applicant"]', group); await admin.keyboard.press('Tab'); };
+  await setGroup('Full name', 'Applicant'); await setGroup('Address', 'Applicant'); await setGroup('Signature', 'Consent');
+  const order = () => admin.locator('.fitem b').allTextContents();
+  expect((await order()).slice(0, 4)).toEqual(['Full name', 'Date', 'Reference', 'Address']);
+  await admin.locator('.fitem', { hasText: 'Address' }).locator('button[title="Move up"]').click();
+  await admin.locator('.fitem', { hasText: 'Address' }).locator('button[title="Move up"]').click();
+  expect((await order()).slice(0, 4)).toEqual(['Full name', 'Address', 'Date', 'Reference']);
+  await expect(admin.locator('.fitem', { hasText: 'Full name' }).locator('button[title="Move up"]')).toBeDisabled();
+  await admin.locator('.fitem', { hasText: 'Date' }).dragTo(admin.locator('.fitem', { hasText: 'Agree' })); // drop before "Agree"
+  const o = await order(); expect(o.indexOf('Date')).toBe(o.indexOf('Agree') - 1);
+  await expect(admin.locator('.flist .fgroup')).toHaveText(['Applicant', 'Consent']); // adjacent fields share one heading
+  await expect(admin.locator('button.pri')).toHaveText('Save changes');
+  await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
+  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(10);
+  expect((await order()).slice(0, 2)).toEqual(['Full name', 'Address']); // the order is saved
 });
 
 test('admin saves metadata and gets a direct link', async () => {
@@ -278,6 +296,9 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#f_birthday')).toHaveValue('1985-12-24'); // from the link, normalised for the date input
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
   await expect(user.locator('.panel label')).toHaveCount(10); // 9 fields plus "Remember on this device" of the signature
+  await expect(user.locator('.panel h2.fgroup')).toHaveText(['Applicant', 'Consent']); // group headings in field order
+  expect(await user.locator('.panel label:not(.chk)').allTextContents()).toEqual(expect.arrayContaining(['Full name *', 'Address']));
+  await expect(user.locator('.panel label').first()).toHaveText('Full name *');
   await expect(user.locator('input.remember')).not.toBeChecked(); // pictures are not remembered unless asked
   await expect(user.locator('#f_agree')).toBeChecked(); // checkbox from the link
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden(); // no signature yet

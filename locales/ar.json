@@ -187,5 +187,10 @@
  "Only PNG and JPEG images are supported": "يُدعم فقط صور PNG و JPEG",
  "No printer is configured": "لم تُضبط أي طابعة",
  "Not found": "غير موجود",
- "Forbidden": "غير مسموح"
+ "Forbidden": "غير مسموح",
+ "Group (optional)": "المجموعة (اختياري)",
+ "e.g. Applicant, Child, Office use": "مثلًا مقدم الطلب، الطفل، لاستخدام المكتب",
+ "Drag to reorder": "اسحب لإعادة الترتيب",
+ "Move up": "نقل لأعلى",
+ "Move down": "نقل لأسفل"
 }

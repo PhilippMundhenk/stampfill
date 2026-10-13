@@ -187,5 +187,10 @@
  "Only PNG and JPEG images are supported": "Підтримуються лише зображення PNG і JPEG",
  "No printer is configured": "Принтер не налаштовано",
  "Not found": "Не знайдено",
- "Forbidden": "Заборонено"
+ "Forbidden": "Заборонено",
+ "Group (optional)": "Група (необов'язково)",
+ "e.g. Applicant, Child, Office use": "наприклад, Заявник, Дитина, Для службових відміток",
+ "Drag to reorder": "Перетягніть, щоб змінити порядок",
+ "Move up": "Вгору",
+ "Move down": "Вниз"
 }

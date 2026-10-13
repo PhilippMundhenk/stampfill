@@ -187,5 +187,10 @@
  "Only PNG and JPEG images are supported": "Obsługiwane są tylko obrazy PNG i JPEG",
  "No printer is configured": "Nie skonfigurowano drukarki",
  "Not found": "Nie znaleziono",
- "Forbidden": "Zabronione"
+ "Forbidden": "Zabronione",
+ "Group (optional)": "Grupa (opcjonalnie)",
+ "e.g. Applicant, Child, Office use": "np. Wnioskodawca, Dziecko, Do użytku biura",
+ "Drag to reorder": "Przeciągnij, aby zmienić kolejność",
+ "Move up": "W górę",
+ "Move down": "W dół"
 }

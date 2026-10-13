@@ -24,6 +24,12 @@ test('slugOf makes readable link names', () => {
   assert.equal(app.slugOf('a'.repeat(100)).length, 60);
 });
 
+test('fields keep their order and carry a trimmed group name', () => {
+  const out = app.cleanFields([{ label: 'B', group: '  Applicant  ' }, { label: 'A', group: 'x'.repeat(80) }, { label: 'C' }], 1);
+  assert.deepEqual(out.map((f) => f.label), ['B', 'A', 'C']);
+  assert.equal(out[0].group, 'Applicant'); assert.equal(out[1].group.length, 40); assert.equal(out[2].group, '');
+});
+
 test('hidden fields are never required; static fields are never hidden', () => {
   const [a, b] = app.cleanFields([{ label: 'A', hidden: true, required: true }, { label: 'B', type: 'static', hidden: true, value: 'x' }], 1);
   assert.equal(a.hidden, true); assert.equal(a.required, false);

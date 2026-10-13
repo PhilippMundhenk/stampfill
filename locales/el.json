@@ -187,5 +187,10 @@
  "Only PNG and JPEG images are supported": "Υποστηρίζονται μόνο εικόνες PNG και JPEG",
  "No printer is configured": "Δεν έχει ρυθμιστεί εκτυπωτής",
  "Not found": "Δεν βρέθηκε",
- "Forbidden": "Δεν επιτρέπεται"
+ "Forbidden": "Δεν επιτρέπεται",
+ "Group (optional)": "Ομάδα (προαιρετικό)",
+ "e.g. Applicant, Child, Office use": "π.χ. Αιτών, Παιδί, Για το γραφείο",
+ "Drag to reorder": "Σύρετε για αλλαγή σειράς",
+ "Move up": "Μετακίνηση πάνω",
+ "Move down": "Μετακίνηση κάτω"
 }

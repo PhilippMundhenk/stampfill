@@ -187,5 +187,10 @@
  "Only PNG and JPEG images are supported": "Yalnızca PNG ve JPEG resimler desteklenir",
  "No printer is configured": "Yapılandırılmış yazıcı yok",
  "Not found": "Bulunamadı",
- "Forbidden": "İzin verilmedi"
+ "Forbidden": "İzin verilmedi",
+ "Group (optional)": "Grup (isteğe bağlı)",
+ "e.g. Applicant, Child, Office use": "örn. Başvuran, Çocuk, Ofis kullanımı",
+ "Drag to reorder": "Sıralamak için sürükleyin",
+ "Move up": "Yukarı taşı",
+ "Move down": "Aşağı taşı"
 }
