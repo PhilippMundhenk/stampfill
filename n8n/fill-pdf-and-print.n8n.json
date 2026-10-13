@@ -1,0 +1,197 @@
+{
+  "name": "Fill PDF form and print",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Print PDF form",
+        "formDescription": "The values are stamped onto the PDF template and sent to the printer.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Full name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Date",
+              "fieldType": "date",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Reference"
+            },
+            {
+              "fieldLabel": "Address",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "options": {
+          "path": "print-pdf-form"
+        }
+      },
+      "id": "a1",
+      "name": "Print Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "print-pdf-form"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"pdfPath\": \"/files/form-template.pdf\",\n  \"printerUrl\": \"http://cups.local:631/printers/MyPrinter\",\n  \"copies\": 1,\n  \"jobName\": \"n8n PDF form\",\n  \"layout\": [\n    {\n      \"field\": \"Full name\",\n      \"page\": 1,\n      \"x\": 150,\n      \"y\": 700,\n      \"size\": 12\n    },\n    {\n      \"field\": \"Date\",\n      \"page\": 1,\n      \"x\": 150,\n      \"y\": 670,\n      \"size\": 12\n    },\n    {\n      \"field\": \"Reference\",\n      \"page\": 1,\n      \"x\": 400,\n      \"y\": 670,\n      \"size\": 12\n    },\n    {\n      \"field\": \"Address\",\n      \"page\": 1,\n      \"x\": 150,\n      \"y\": 640,\n      \"size\": 11,\n      \"maxWidth\": 300\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "a2",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "notes": "pdfPath, printerUrl and the field positions (x/y in PDF points from bottom-left; 'field' = form label)",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.pdfPath }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "id": "a3",
+      "name": "Load PDF",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stamps the submitted form values onto the PDF and wraps the result in an IPP Print-Job request.\nconst { PDFDocument, StandardFonts, rgb } = require('pdf-lib');\n\nconst cfg = $('Config').first().json;\nconst form = $('Print Form').first().json;\n\n// --- 1. Insert text fields ---------------------------------------------------\nconst pdf = await PDFDocument.load(await this.helpers.getBinaryDataBuffer(0, 'data'));\nconst font = await pdf.embedFont(StandardFonts.Helvetica);\nconst pages = pdf.getPages();\n\nfor (const f of cfg.layout) {\n  const text = String(form[f.field] ?? '').trim();\n  if (!text) continue;\n  const page = pages[(f.page ?? 1) - 1];\n  if (!page) throw new Error(`Layout for \"${f.field}\" points to page ${f.page}, but the PDF has ${pages.length}`);\n  const size = f.size ?? 11;\n  // x / y are in PDF points (1/72 inch) measured from the bottom-left corner of the page\n  page.drawText(text, { x: f.x, y: f.y, size, font, color: rgb(0, 0, 0), maxWidth: f.maxWidth, lineHeight: size * 1.25 });\n}\nconst filled = Buffer.from(await pdf.save());\n\n// --- 2. Build IPP Print-Job request (RFC 8011) ---------------------------------\nconst attr = (tag, name, value) => {\n  const n = Buffer.from(name), v = Buffer.isBuffer(value) ? value : Buffer.from(String(value));\n  const h = Buffer.alloc(3); h.writeUInt8(tag, 0); h.writeUInt16BE(n.length, 1);\n  const l = Buffer.alloc(2); l.writeUInt16BE(v.length, 0);\n  return Buffer.concat([h, n, l, v]);\n};\nconst int = (n) => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };\nconst copies = Math.max(1, parseInt(cfg.copies ?? 1, 10) || 1);\n\nconst ipp = Buffer.concat([\n  Buffer.from([0x02, 0x00, 0x00, 0x02]), int(1),            // IPP 2.0, Print-Job, request-id 1\n  Buffer.from([0x01]),                                       // operation attributes\n  attr(0x47, 'attributes-charset', 'utf-8'),\n  attr(0x48, 'attributes-natural-language', 'en'),\n  attr(0x45, 'printer-uri', cfg.printerUrl.replace(/^http/, 'ipp')),\n  attr(0x42, 'requesting-user-name', 'n8n'),\n  attr(0x42, 'job-name', cfg.jobName ?? 'n8n PDF form'),\n  attr(0x49, 'document-format', 'application/pdf'),\n  Buffer.from([0x02]),                                       // job attributes\n  attr(0x21, 'copies', int(copies)),\n  Buffer.from([0x03]),                                       // end of attributes\n  filled,\n]);\n\nreturn [{\n  json: { pages: pages.length, bytes: filled.length, copies },\n  binary: {\n    data: await this.helpers.prepareBinaryData(filled, 'filled-form.pdf', 'application/pdf'),\n    ipp: await this.helpers.prepareBinaryData(ipp, 'print-job.ipp', 'application/ipp'),\n  },\n}];\n"
+      },
+      "id": "a4",
+      "name": "Insert Text Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.printerUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/ipp"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "ipp",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "ippResponse"
+            }
+          }
+        }
+      },
+      "id": "a5",
+      "name": "Send to Printer (IPP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// IPP response: bytes 2-3 are the status code; 0x0000-0x00FF = success\nconst res = await this.helpers.getBinaryDataBuffer(0, 'ippResponse');\nconst status = res.readUInt16BE(2);\nif (status > 0x00ff) throw new Error(`Printer rejected the job (IPP status 0x${status.toString(16).padStart(4, '0')})`);\n// job-id is an integer attribute (tag 0x21) named \"job-id\"\nconst i = res.indexOf(Buffer.from('job-id'));\nconst jobId = i > 0 ? res.readInt32BE(i + 6 + 2) : null;\nreturn [{ json: { printed: true, ippStatus: status, jobId } }];\n"
+      },
+      "id": "a6",
+      "name": "Check Print Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Print Form": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Load PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load PDF": {
+      "main": [
+        [
+          {
+            "node": "Insert Text Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Text Fields": {
+      "main": [
+        [
+          {
+            "node": "Send to Printer (IPP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Printer (IPP)": {
+      "main": [
+        [
+          {
+            "node": "Check Print Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

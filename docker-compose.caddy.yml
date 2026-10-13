@@ -1,0 +1,29 @@
+# Overlay: puts Caddy in front of stampfill with automatic HTTPS (Let's Encrypt).
+# Requires Docker Compose 2.24+ (for !override) and DOMAIN in .env pointing at this host.
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+services:
+  stampfill:
+    ports: !override []          # only reachable through Caddy
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      stampfill:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
