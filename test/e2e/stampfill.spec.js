@@ -26,7 +26,10 @@ const track = (/** @type {import('@playwright/test').Page} */ p, who) => {
 };
 const shot = (p, name, full = false) => p.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
 // waits for the debounced live preview to re-render after an input change
-const settle = async (p, action) => { const r = p.waitForResponse((x) => x.url().includes('/render') && x.ok()); await action(); await r; await p.waitForLoadState('networkidle'); };
+const settle = async (p, action) => {
+  const r = p.waitForResponse((x) => x.url().includes('/render') && x.ok()); await action(); await r;
+  await p.waitForLoadState('networkidle'); await expect(p.locator('.preview')).not.toHaveClass(/busy/);
+};
 
 test.beforeAll(async ({ browser: b, baseURL }) => {
   browser = b; fs.mkdirSync(SHOTS, { recursive: true });
@@ -79,6 +82,7 @@ test('admin places fields by double-click and configures prefill modes', async (
 });
 
 test('admin drags a marker and the coordinates follow', async () => {
+  await admin.evaluate(() => scrollTo(0, 0)); // the sticky header must not cover the marker
   const yIn = admin.locator('#fp input[type=number]').nth(2);
   const y0 = Number(await yIn.inputValue());
   const box = await admin.locator('.ov').boundingBox(); if (!box) throw new Error('no overlay');
@@ -212,7 +216,20 @@ test('form works on a phone-sized screen', async () => {
   await mp.goto(link + '#full_name=Mobile+User&reference=M-1');
   await expect(mp.locator('.preview canvas')).toBeVisible();
   await expect(mp.locator('#f_full_name')).toHaveValue('Mobile User');
-  await mp.waitForLoadState('networkidle'); await shot(mp, '7-form-mobile', true);
+  await mp.waitForLoadState('networkidle'); await expect(mp.locator('.preview')).not.toHaveClass(/busy/);
+  await shot(mp, '7-form-mobile', true);
+  await ctx.close();
+});
+
+test('form follows the dark colour scheme', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1320, height: 900 }, colorScheme: 'dark' });
+  const dp = track(await ctx.newPage(), 'dark');
+  await dp.goto(link + '#full_name=Dark+Mode&reference=D-1');
+  await expect(dp.locator('.preview canvas')).toBeVisible();
+  await dp.waitForLoadState('networkidle'); await expect(dp.locator('.preview')).not.toHaveClass(/busy/);
+  const bg = await dp.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  expect(bg).toBe('rgb(17, 19, 23)');
+  await shot(dp, '8-form-dark');
   await ctx.close();
 });
 

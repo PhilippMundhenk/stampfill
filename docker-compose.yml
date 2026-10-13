@@ -8,6 +8,9 @@ services:
     image: ghcr.io/philippmundhenk/stampfill:latest
     build: .
     restart: unless-stopped
+    # The process runs as this uid:gid and must own /data. Default 1000:1000 matches the image and the
+    # named volume below. With a bind mount (e.g. ./data:/data) set PUID/PGID in .env to the folder owner.
+    user: "${PUID:-1000}:${PGID:-1000}"
     ports:
       - "8080:8080"
     environment:
@@ -15,7 +18,7 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-1}        # take the client IP from X-Forwarded-For (login rate limit)
       MAX_PDF_MB: ${MAX_PDF_MB:-25}
     volumes:
-      - stampfill-data:/data
+      - stampfill-data:/data            # or a bind mount: ./data:/data (see "File permissions" in the README)
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 30s

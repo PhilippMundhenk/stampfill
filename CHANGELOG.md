@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `PUID`/`PGID` in Compose and `.env.example` to run the container as the owner of a bind-mounted
+  data folder; README section on file permissions.
+- Startup check that refuses to run with an unwritable data directory and prints the UID/GID in use.
+- gzip for pages and pdf.js assets with an in-memory cache; `modulepreload` for pdf.js.
+
+### Changed
+- Interface refresh: new light/dark palette, sticky translucent header with logo, hover and focus
+  states, skeleton preview while loading, sticky action bar on phones, styled selects and toasts.
+- Live preview debounce reduced to 200 ms and the previous page stays visible, dimmed, while the
+  next render is in flight.
+
 ## [1.0.0] - 2026-10-13
 
 First release under the name stampfill (previously "pdfforms").

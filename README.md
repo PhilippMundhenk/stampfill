@@ -17,6 +17,8 @@ build step. It is meant for a school office, a club, a small company, a househol
 | Admin: place fields on the template | Public form with live preview |
 | --- | --- |
 | ![Editor](docs/screenshots/2-editor.png) | ![Form](docs/screenshots/6-form.png) |
+| Dark mode | Phone |
+| ![Dark mode](docs/screenshots/8-form-dark.png) | ![Phone](docs/screenshots/7-form-mobile.png) |
 
 ## Features
 
@@ -31,7 +33,8 @@ build step. It is meant for a school office, a club, a small company, a househol
   index with tags and search. Links can be rotated.
 - **Unicode**: drop a TrueType font at `DATA_DIR/font.ttf` and all stamped text uses it.
 - **Small footprint**: single process, JSON file plus the uploaded PDFs on disk, around 50 MB
-  resident memory.
+  resident memory. Pages and assets are served gzip-compressed from memory.
+- **Light and dark**: follows the system colour scheme, works on phones, respects reduced motion.
 
 ## Quick start
 
@@ -92,6 +95,22 @@ docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
 Caddy obtains and renews a Let's Encrypt certificate and proxies to stampfill. Port 8080 is no
 longer published.
 
+### File permissions (UID/GID)
+
+The container runs as the unprivileged user `node`, **UID 1000 and GID 1000**, and writes only to
+`/data`. Errors like `EACCES: permission denied, open '/data/db.json'` mean that directory is
+owned by someone else. Two ways to fix it:
+
+- **Named volume** (the default in `docker-compose.yml`): nothing to do. Docker creates the volume
+  with the ownership baked into the image.
+- **Bind mount** (`./data:/data`): either give the host folder to UID 1000
+  (`sudo chown -R 1000:1000 ./data`), or run the container as the folder's owner. Find your ids
+  with `id -u` and `id -g`, put them into `.env` as `PUID` and `PGID`, and Compose passes them
+  as `user: "PUID:PGID"`. Without Compose: `docker run --user 1000:1000 …`.
+
+The service refuses to start, with a message naming the UID/GID it runs as, when `/data` is not
+writable, so a wrong setting shows up in `docker compose logs` right away.
+
 ### Behind your own reverse proxy
 
 Point nginx, Traefik or similar at port 8080, forward `X-Forwarded-For` and
@@ -100,15 +119,27 @@ Point nginx, Traefik or similar at port 8080, forward `X-Forwarded-For` and
 
 ### Printing from the server
 
-Enter the printer's IPP URL in Settings, for example `http://cups-host:631/printers/Office` or
-`ipp://printer.local/ipp/print`. The printer (or CUPS queue) must accept PDF. By default only a
+Enter the printer's IPP URL in Settings. The printer (or CUPS queue) must accept PDF.
+
+| Target | URL |
+| --- | --- |
+| CUPS queue | `http://cups-host:631/printers/Office` |
+| Printer with IPP Everywhere / AirPrint (most Brother, HP, Canon, Epson models), e.g. a Brother MFC-L2700DW | `ipp://192.168.1.50:631/ipp/print` |
+
+Keep the `:631` port in the URL and use the printer's IP address rather than its `.local` name:
+mDNS usually does not resolve inside a container, and a DHCP reservation keeps the address stable.
+If the printer answers with IPP status `0x040a` (document format not supported), print through a
+CUPS queue instead. By default only a
 logged-in admin sees "Send to printer"; the setting "Let everyone with a document link use this
 printer" opens it to all users, which only makes sense on a trusted network.
 
 ### Backups and upgrades
 
-All state is in the data volume (`stampfill-data` in Compose, `DATA_DIR` otherwise). Back up
-that directory. Upgrading is `docker compose pull && docker compose up -d`. The `db.json` format
+All state is in the data volume (`stampfill-data` in Compose, `DATA_DIR` otherwise):
+`db.json` with the documents, field layouts, settings, admin password hash and session secret,
+the `pdfs/` folder with the templates, and the optional `font.ttf`. Nothing else is kept on the
+server, so backing up that directory is a complete backup. Browser-remembered field values live in
+each user's browser only. Upgrading is `docker compose pull && docker compose up -d`. The `db.json` format
 is forward compatible; missing settings get their defaults.
 
 ### Health check
