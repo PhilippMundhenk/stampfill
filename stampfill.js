@@ -1156,7 +1156,8 @@ async function editView(id) {
   let dropPw = false;
   const pwIn = h('input', { type: 'text', autocomplete: 'off', spellcheck: false, placeholder: d.protected ? 'Password set — type a new one to change it' : 'No password', oninput: () => { dropPw = false; mark(); } });
   const pwDrop = h('button', { class: 'small', style: d.protected ? '' : 'display:none', onclick: () => { dropPw = true; pwIn.value = ''; pwIn.placeholder = 'Password will be removed on save'; mark(); } }, 'Remove');
-  const afterSave = () => { link.value = linkOf(d); slugInit = readable(d.slug); slugIn.value = slugInit; pwIn.value = ''; dropPw = false; pwIn.placeholder = d.protected ? 'Password set — type a new one to change it' : 'No password'; pwDrop.style.display = d.protected ? '' : 'none'; };
+  const openBtn = h('a', { class: 'btn', target: '_blank', href: '/d/' + d.slug }, 'Open form');
+  const afterSave = () => { link.value = linkOf(d); openBtn.href = '/d/' + d.slug; slugInit = readable(d.slug); slugIn.value = slugInit; pwIn.value = ''; dropPw = false; pwIn.placeholder = d.protected ? 'Password set — type a new one to change it' : 'No password'; pwDrop.style.display = d.protected ? '' : 'none'; };
   const fieldsBox = h('div'), propsBox = h('div', { id: 'fp' });
   const repl = h('input', { type: 'file', accept: 'application/pdf,.pdf', style: 'display:none', onchange: async () => {
     const f = repl.files[0]; if (!f) return;
@@ -1226,7 +1227,7 @@ async function editView(id) {
 
   app.append(
     h('div', { class: 'row', style: 'margin-bottom:12px' }, h('a', { href: '#', class: 'muted' }, '← Documents'), h('span', { class: 'grow' }),
-      h('a', { class: 'btn', target: '_blank', href: '/d/' + d.slug }, 'Open form'), saveBtn),
+      openBtn, saveBtn),
     h('div', { class: 'editor' },
       h('div', { class: 'ed-stage' }, h('div', { class: 'row', style: 'margin-bottom:8px' },
         h('button', { onclick: () => { if (pageNo > 1) { pageNo--; redraw().catch(fail); } } }, '‹'), pageLbl, h('button', { onclick: () => { if (pageNo < d.pages) { pageNo++; redraw().catch(fail); } } }, '›'),

@@ -189,6 +189,7 @@ test('admin saves metadata and gets a direct link', async () => {
   await admin.waitForLoadState('networkidle'); await shot(admin, '2-editor', true);
   link = await admin.locator('input[readonly]').inputValue();
   expect(link).toBe('http://127.0.0.1:8099/d/sample-request');
+  await expect(admin.locator('a.btn', { hasText: 'Open form' })).toHaveAttribute('href', '/d/sample-request'); // follows the new link name
   await admin.locator('button', { hasText: 'Copy' }).first().click(); await expect(admin.locator('#toast')).toHaveText('Link copied');
   // document settings collapse (remembered) and the three-column layout on wide screens
   await admin.locator('details.ed-doc summary').click(); await expect(admin.locator('#slugIn')).toBeHidden();
