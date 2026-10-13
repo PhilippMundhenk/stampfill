@@ -22,7 +22,7 @@ test('settings and documents from 1.0.0 are kept and completed with defaults', (
   assert.equal(app.db.settings.siteTitle, 'Town hall forms');
   assert.equal(app.db.settings.publicPrint, true);
   assert.equal(app.db.secret, 'v1-secret-not-random', 'sessions survive the upgrade');
-  assert.match(app.db.auth, /^a1b2c3d4e5f6g7h8:/, 'the stored admin password is untouched');
+  assert.match(app.db.auth, /^legacysalt:/, 'the stored admin password is untouched');
   const d = app.db.docs[0];
   assert.equal(d.slug, 'AbCdEfGhIj', 'links handed out before the upgrade keep working');
   assert.equal(d.fields.length, 4);
@@ -45,6 +45,24 @@ test('public and admin endpoints serve the migrated document', async () => {
   const r = await fetch(base + '/api/d/AbCdEfGhIj/render', { method: 'POST', headers: { 'X-Requested-With': 'stampfill' }, body: JSON.stringify({ values: { full_name: 'Old User', date: '2026-10-13', agree: '1' } }) });
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal((await fetch(base + '/healthz')).status, 200);
+});
+
+test('the stored admin password still logs in and can be changed (no ADMIN_PASSWORD set)', async () => {
+  const H = { 'X-Requested-With': 'stampfill' };
+  const login = (password, extra = {}) => fetch(base + '/api/login', { method: 'POST', headers: { ...H, ...extra }, body: JSON.stringify({ password }) });
+  assert.equal((await login('nope')).status, 401);
+  let r = await login('legacy-pass-123', { 'X-Forwarded-Proto': 'https' }); assert.equal(r.status, 200);
+  assert.match(r.headers.get('set-cookie'), /; Secure$/, 'behind an HTTPS proxy the cookie is Secure');
+  const old = r.headers.get('set-cookie').split(';')[0];
+  const me = await (await fetch(base + '/api/admin/me', { headers: { Cookie: old } })).json(); assert.deepEqual(me, { ok: true, envPassword: false });
+  const change = (body, c = old) => fetch(base + '/api/admin/password', { method: 'POST', headers: { ...H, Cookie: c }, body: JSON.stringify(body) });
+  assert.equal((await change({ current: 'wrong', next: 'new-pass-456' })).status, 403);
+  assert.equal((await change({ current: 'legacy-pass-123', next: 'short' })).status, 400);
+  r = await change({ current: 'legacy-pass-123', next: 'new-pass-456' }); assert.equal(r.status, 200);
+  const fresh = r.headers.get('set-cookie').split(';')[0];
+  assert.equal((await fetch(base + '/api/admin/me', { headers: { Cookie: old } })).status, 401, 'other sessions are signed out');
+  assert.equal((await fetch(base + '/api/admin/me', { headers: { Cookie: fresh } })).status, 200);
+  assert.equal((await login('legacy-pass-123')).status, 401); assert.equal((await login('new-pass-456')).status, 200);
 });
 
 test('migration is idempotent', () => {

@@ -1,9 +1,10 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs'), os = require('os'), path = require('path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'stampfill-unit-'));
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 process.env.DATA_DIR = tmp; process.env.ADMIN_PASSWORD = 'unit-pass-123';
 const app = require('../../stampfill.js');
 const SAMPLE = path.join(__dirname, '..', 'fixtures', 'sample-form.pdf');
@@ -135,8 +136,7 @@ test('inspectPdf rejects non-PDF input and counts pages', async () => {
   assert.equal(await app.inspectPdf(fs.readFileSync(SAMPLE)), 1);
 });
 
-test('renderPdf stamps values onto the template', async (t) => {
-  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+test('renderPdf stamps values onto the template', async () => {
   fs.copyFileSync(SAMPLE, path.join(tmp, 'pdfs', 'doc1.pdf'));
   const fields = app.cleanFields([
     { label: 'Name', x: 100, y: 700 }, { label: 'When', type: 'date', x: 100, y: 680, dateFormat: 'DD.MM.YYYY' },
@@ -150,4 +150,40 @@ test('renderPdf stamps values onto the template', async (t) => {
   assert.ok(pdf.length > fs.statSync(SAMPLE).size, 'output should contain added content');
   const { PDFDocument } = require('pdf-lib');
   assert.equal((await PDFDocument.load(pdf)).getPageCount(), 1);
+});
+
+test('renderPdf replaces characters the font cannot encode and skips unknown pages', async () => {
+  const fields = app.cleanFields([{ label: 'Name', x: 100, y: 700 }, { label: 'Far', x: 10, y: 10, page: 1 }], 1);
+  fields[1].page = 7; // a field on a page that does not exist is ignored
+  const pdf = await app.renderPdf({ id: 'doc1' }, fields, { name: '日本語 and ümlaut', far: 'x' });
+  assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+});
+
+test('renderPdf uses DATA_DIR/font.ttf when present', async () => {
+  const ttf = path.join(__dirname, '..', '..', 'node_modules', 'pdfjs-dist', 'standard_fonts', 'LiberationSans-Bold.ttf');
+  fs.copyFileSync(ttf, path.join(tmp, 'font.ttf'));
+  try {
+    const pdf = await app.renderPdf({ id: 'doc1' }, app.cleanFields([{ label: 'Name', x: 100, y: 700 }], 1), { name: 'Custom font' });
+    assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+    const { PDFDocument, PDFDict, PDFName } = require('pdf-lib');
+    const doc = await PDFDocument.load(pdf);
+    const embedded = doc.context.enumerateIndirectObjects().some(([, o]) => o instanceof PDFDict && o.has(PDFName.of('FontFile2')));
+    assert.ok(embedded, 'a TrueType subset is embedded');
+  } finally { fs.rmSync(path.join(tmp, 'font.ttf'), { force: true }); }
+});
+
+test('ippPrint needs a configured printer', async () => {
+  await assert.rejects(app.ippPrint(Buffer.from('%PDF-'), 1, 'x'), /No printer is configured/);
+});
+
+test('pruneFails keeps the login rate-limit table bounded', () => {
+  app.fails.clear();
+  app.fails.set('keep-blocked', { n: 9, until: Date.now() + 60000, at: 0 });
+  app.fails.set('keep-recent', { n: 1, until: 0, at: Date.now() });
+  app.pruneFails(); assert.equal(app.fails.size, 2, 'small tables are left alone');
+  for (let i = 0; i < 1200; i++) app.fails.set('10.0.' + (i >> 8) + '.' + (i & 255), { n: 1, until: 0, at: Date.now() - 10 * 60000 });
+  app.pruneFails();
+  assert.equal(app.fails.size, 2, 'expired, old entries are dropped');
+  assert.ok(app.fails.has('keep-blocked') && app.fails.has('keep-recent'));
+  app.fails.clear();
 });

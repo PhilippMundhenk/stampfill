@@ -180,10 +180,14 @@ Mutating requests must carry the header `X-Requested-With: stampfill`, which is 
 npm ci
 npx playwright install chromium
 npm run lint         # ESLint
-npm run test:unit    # helpers and HTTP API, node:test
+npm run test:unit    # helpers, HTTP API, upgrade path and process behaviour (node:test under c8)
 npm run test:e2e     # browser tests, Playwright
 npm test             # all of the above
 ```
+
+Coverage is enforced: at least 95% of the server lines (c8, `.c8rc.json`) and 85% of each inline
+page script, measured through Chromium's V8 coverage by the browser suite itself. Both runs print
+their numbers; details in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The end-to-end suite boots a fresh instance on port 8099 and a mock IPP printer on port 6310,
 then walks through login, upload, field placement, settings, the public form, server print,

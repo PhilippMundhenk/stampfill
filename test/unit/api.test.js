@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs'), os = require('os'), path = require('path');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'stampfill-api-'));
-process.env.DATA_DIR = path.join(tmp, 'data'); process.env.ADMIN_PASSWORD = 'api-pass-123';
+process.env.DATA_DIR = path.join(tmp, 'data'); process.env.ADMIN_PASSWORD = 'api-pass-123'; process.env.TRUST_PROXY = '1';
 const app = require('../../stampfill.js');
 const db = () => app.db;
 const { createMockIpp } = require('../mock-ipp.js');
@@ -41,6 +41,28 @@ test('pages are served with security headers', async () => {
   assert.equal((await fetch(base + '/nope')).status, 404);
   assert.equal((await fetch(base + '/vendor/../package.json')).status, 404);
   assert.equal((await fetch(base + '/vendor/pdf.mjs')).status, 200);
+  assert.equal((await fetch(base + '/vendor/pdf.worker.mjs')).status, 200);
+  assert.equal((await fetch(base + '/vendor/cmaps/Adobe-Japan1-UCS2.bcmap')).status, 200);
+  assert.equal((await fetch(base + '/vendor/cmaps/nope.bcmap')).status, 404);
+  assert.equal((await fetch(base + '/vendor/evil.txt')).status, 404);
+});
+
+test('static content is gzip-compressed when the client accepts it', async () => {
+  const gz = await fetch(base + '/vendor/pdf.mjs', { headers: { 'Accept-Encoding': 'gzip' } });
+  assert.equal(gz.headers.get('content-encoding'), 'gzip'); assert.equal(gz.headers.get('vary'), 'Accept-Encoding');
+  const plain = await fetch(base + '/vendor/pdf.mjs', { headers: { 'Accept-Encoding': 'identity' } });
+  assert.equal(plain.headers.get('content-encoding'), null);
+  assert.equal((await fetch(base + '/admin', { headers: { 'Accept-Encoding': 'gzip' } })).headers.get('content-encoding'), 'gzip');
+  assert.equal((await fetch(base + '/healthz', { headers: { 'Accept-Encoding': 'gzip' } })).headers.get('content-encoding'), null, 'small JSON stays plain');
+});
+
+test('oversized bodies and unknown admin paths are rejected', async () => {
+  assert.equal((await call('POST', '/api/login', Buffer.alloc(20000, 32))).status, 413);
+  await call('POST', '/api/login', { password: 'api-pass-123' }).then((r) => { cookie = r.headers.get('set-cookie').split(';')[0]; });
+  assert.equal((await call('GET', '/api/admin/nothing')).status, 404);
+  assert.equal((await call('GET', '/api/admin/images/zzzzzzzz.png')).status, 404);
+  assert.equal((await call('PATCH', '/api/admin/settings')).status, 404);
+  cookie = '';
 });
 
 test('non-GET requests need the CSRF header; admin API needs a session', async () => {
@@ -84,7 +106,10 @@ test('upload, edit and render a document', async () => {
   r = await call('POST', '/api/admin/docs/' + doc.id + '/render', { fields: doc.fields }); assert.equal(r.status, 200);
   assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal(Buffer.from(await r.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
+  assert.equal((await call('POST', '/api/admin/docs/' + doc.id + '/render', { fields: doc.fields, values: { full_name: 'Preview' } })).status, 200, 'preview with explicit values');
   assert.equal((await call('GET', '/api/admin/docs/zzz')).status, 404);
+  const untitled = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, title: '   ' })).json(); assert.equal(untitled.title, 'Untitled');
+  doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, title: 'Sample form' })).json();
 });
 
 let imgName;
@@ -109,6 +134,8 @@ test('image fields: default image upload, public delivery, render with a data UR
   assert.equal(pub.fields.find((f) => f.key === 'stamp').value, imgName); assert.equal(pub.fields.find((f) => f.key === 'sig').value, '');
   r = await fetch(base + '/api/d/' + doc.slug + '/image/stamp'); assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'image/png');
   assert.equal((await fetch(base + '/api/d/' + doc.slug + '/image/sig')).status, 404, 'only default images are served');
+  assert.equal((await fetch(base + '/api/d/' + doc.slug + '/image/full_name')).status, 404, 'text fields have no image');
+  assert.equal((await fetch(base + '/api/d/nope/image/stamp')).status, 404);
   r = await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: H, body: JSON.stringify({ values: { full_name: 'T', sig: 'data:image/png;base64,' + PNG.toString('base64') } }) });
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.ok(fs.existsSync(path.join(app.IMAGES, imgName)));
@@ -164,6 +191,8 @@ test('a form password locks the public endpoints until unlocked', async () => {
   }
   assert.equal((await call('GET', '/api/d/' + doc.slug)).status, 200, 'admins are never locked out');
   let r = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'nope' }) }); assert.equal(r.status, 401);
+  const sec = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: { ...H, 'X-Forwarded-Proto': 'https' }, body: JSON.stringify({ password: 'open-sesame' }) });
+  assert.match(sec.headers.get('set-cookie'), /; Secure$/, 'behind an HTTPS proxy the unlock cookie is Secure');
   r = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'open-sesame' }) }); assert.equal(r.status, 200);
   const uc = r.headers.get('set-cookie'); assert.match(uc, /^sf_u_[\w-]+=[\w-]+; Path=\/; HttpOnly; SameSite=Strict; Max-Age=43200$/);
   const ucookie = uc.split(';')[0];
@@ -187,10 +216,25 @@ test('new link invalidates the old one; delete removes the PDF', async () => {
   assert.ok(!fs.existsSync(path.join(app.IMAGES, imgName)), 'default images go with the document');
 });
 
-test('logout clears the session; repeated failures are rate limited', async () => {
+test('printer failures are reported, not swallowed', async () => {
+  await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: ippUrl, publicPrint: true });
+  const expect = { 'http-error': [502, /HTTP 500/], 'short-answer': [502, /HTTP 200/], 'reject-me': [502, /rejected .*0x040a/], 'no-job-id': [200, null] };
+  for (const [title, [status, msg]] of Object.entries(expect)) {
+    const d = await (await call('POST', '/api/admin/docs?title=' + title, SAMPLE)).json();
+    const r = await fetch(base + '/api/d/' + d.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });
+    assert.equal(r.status, status, title);
+    const j = await r.json(); if (msg) assert.match(j.error, msg); else assert.deepEqual(j, { ok: true, jobId: null });
+    await call('DELETE', '/api/admin/docs/' + d.id);
+  }
+});
+
+test('logout clears the session; repeated failures are rate limited per client IP', async () => {
   const r = await call('POST', '/api/logout'); assert.match(r.headers.get('set-cookie'), /Max-Age=0/);
   cookie = ''; assert.equal((await call('GET', '/api/admin/me')).status, 401);
+  const xff = { 'X-Forwarded-For': '203.0.113.9, 10.0.0.1' }; // TRUST_PROXY=1: the first hop is the client
   let last;
-  for (let i = 0; i < 6; i++) last = (await call('POST', '/api/login', { password: 'wrong' })).status;
+  for (let i = 0; i < 6; i++) last = (await call('POST', '/api/login', { password: 'wrong' }, xff)).status;
   assert.equal(last, 429);
+  assert.equal((await call('POST', '/api/login', { password: 'wrong' })).status, 401, 'other clients are not blocked');
+  assert.equal((await call('POST', '/api/login', { password: 'api-pass-123' }, xff)).status, 429, 'blocked even with the right password');
 });

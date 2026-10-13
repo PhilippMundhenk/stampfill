@@ -101,7 +101,7 @@ const clientIp = (req) => (process.env.TRUST_PROXY && (req.headers['x-forwarded-
 class HttpErr extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const SEC = {
   'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
+  'Content-Security-Policy': "default-src 'self'; connect-src 'self' blob:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self' blob:; frame-src blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 function send(res, status, body, type, extra) {
@@ -120,7 +120,7 @@ function sendStatic(req, res, key, body, type, extra) {
 function readBody(req, limit) {
   return new Promise((ok, no) => {
     const chunks = []; let n = 0;
-    req.on('data', (c) => { n += c.length; if (n > limit) { no(new HttpErr(413, 'Request too large')); req.destroy(); } else chunks.push(c); });
+    req.on('data', (c) => { n += c.length; if (n > limit) { no(new HttpErr(413, 'Request too large')); req.pause(); /* the 413 goes out first; Node discards the rest of the body */ } else chunks.push(c); });
     req.on('end', () => ok(Buffer.concat(chunks))); req.on('error', no);
   });
 }
@@ -459,7 +459,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, migrate, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, migrate, fails, pruneFails, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -567,18 +567,6 @@ async function api(method, url, body, raw) {
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch (e) {} const err = new Error(m); err.status = r.status; throw err; }
   return raw ? r.arrayBuffer() : r.json();
 }
-// reads an image file, scales it down to at most max px on the longer side and returns a data URL (PNG, or JPEG for JPEG input)
-async function imageData(file, max) {
-  const url = URL.createObjectURL(file);
-  try {
-    const im = new Image();
-    await new Promise((ok, no) => { im.onload = ok; im.onerror = () => no(new Error('That file is not a PNG or JPEG image')); im.src = url; });
-    const s = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight, 1));
-    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(im.naturalWidth * s)); c.height = Math.max(1, Math.round(im.naturalHeight * s));
-    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
-    return file.type === 'image/jpeg' ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png');
-  } finally { URL.revokeObjectURL(url); }
-}
 let toastT;
 function toast(msg, bad) { const t = $('#toast'); t.textContent = msg; t.className = 'show' + (bad ? ' bad' : ''); clearTimeout(toastT); toastT = setTimeout(() => t.className = '', bad ? 5000 : 2200); }
 const fail = (e) => toast(e.message || String(e), true);
@@ -620,6 +608,19 @@ async function listView() {
   }
   app.append(h('h1', {}, 'Documents'), h('input', { type: 'search', placeholder: 'Search documents', oninput: e => { q = e.target.value.trim().toLowerCase(); draw(); } }), chips, list);
   draw();
+}
+
+// reads an image file, scales it down to at most max px on the longer side and returns a data URL (PNG, or JPEG for JPEG input)
+async function imageData(file, max) {
+  const url = URL.createObjectURL(file);
+  try {
+    const im = new Image();
+    await new Promise((ok, no) => { im.onload = ok; im.onerror = () => no(new Error('That file is not a PNG or JPEG image')); im.src = url; });
+    const s = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight, 1));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(im.naturalWidth * s)); c.height = Math.max(1, Math.round(im.naturalHeight * s));
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+    return file.type === 'image/jpeg' ? c.toDataURL('image/jpeg', 0.85) : c.toDataURL('image/png');
+  } finally { URL.revokeObjectURL(url); }
 }
 
 function lockView() {
@@ -951,6 +952,7 @@ async function editView(id) {
     const bind = (el, prop, conv, after) => { el.addEventListener('input', () => { f[prop] = conv ? conv(el) : el.value; mark(); later(); if (after) after(); }); return el; };
     const numIn = (prop, step, min) => bind(h('input', { type: 'number', step, min, value: f[prop] }), prop, el => el.value === '' ? 0 : +el.value, markers);
     const keyIn = bind(h('input', { type: 'text', value: f.key }), 'key', el => keyOf(el.value));
+    keyIn.addEventListener('change', () => { keyIn.value = f.key; }); // show the normalised key once editing is done
     const labelIn = h('input', { type: 'text', value: f.label });
     labelIn.addEventListener('input', () => { const auto = f.key === keyOf(f.label); f.label = labelIn.value; if (auto) { f.key = keyOf(f.label); keyIn.value = f.key; } mark(); later(); flist(); });
     const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => {

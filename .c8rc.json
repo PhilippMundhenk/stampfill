@@ -1,0 +1,10 @@
+{
+  "include": ["stampfill.js", "test/mock-ipp.js"],
+  "reporter": ["text", "lcov", "json-summary"],
+  "reports-dir": "test-results/coverage",
+  "check-coverage": true,
+  "lines": 95,
+  "functions": 95,
+  "statements": 95,
+  "branches": 85
+}

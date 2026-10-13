@@ -36,13 +36,17 @@ function createMockIpp(outDir) {
       fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(path.join(outDir, 'printed.pdf'), r.doc);
       fs.writeFileSync(path.join(outDir, 'job.json'), JSON.stringify({ ct: req.headers['content-type'], version: r.version, op: r.op, attrs: r.attrs, docBytes: r.doc.length }, null, 1));
-      const bad = r.attrs['document-format'] !== 'application/pdf' || r.doc.subarray(0, 5).toString() !== '%PDF-';
+      // test hooks via the job name (= document title): simulate printer failures
+      const name = r.attrs['job-name'] || '';
+      if (name === 'http-error') { res.writeHead(500, { 'Content-Type': 'text/plain' }); return res.end('printer exploded'); }
+      if (name === 'short-answer') { res.writeHead(200, { 'Content-Type': 'application/ipp' }); return res.end(Buffer.from([2, 0])); }
+      const bad = name === 'reject-me' || r.attrs['document-format'] !== 'application/pdf' || r.doc.subarray(0, 5).toString() !== '%PDF-';
       const jobId = Buffer.alloc(4); jobId.writeInt32BE(42, 0);
       res.writeHead(200, { 'Content-Type': 'application/ipp' });
       res.end(Buffer.concat([
         Buffer.from([2, 0, bad ? 0x04 : 0, bad ? 0x0a : 0]), r.requestId, // status: successful-ok or client-error-document-format-not-supported
         Buffer.from([1]), attr(0x47, 'attributes-charset', 'utf-8'), attr(0x48, 'attributes-natural-language', 'en'),
-        Buffer.from([2]), attr(0x21, 'job-id', jobId), Buffer.from([3]),
+        ...(name === 'no-job-id' ? [] : [Buffer.from([2]), attr(0x21, 'job-id', jobId)]), Buffer.from([3]),
       ]));
     });
   });

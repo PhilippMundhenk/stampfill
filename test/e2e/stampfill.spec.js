@@ -20,10 +20,12 @@ test.describe.configure({ mode: 'serial' });
 /** @type {string[]} */ const errors = [];
 let link = '', docHash = '';
 
+const cov = require('./coverage');
 const track = (/** @type {import('@playwright/test').Page} */ p, who) => {
+  cov.start(p);
   p.on('pageerror', (e) => errors.push(who + ' pageerror: ' + e.message));
-  // 401 (before login / wrong password) and 404 (rotated link) are provoked on purpose by this story
-  p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource.*status of (401|404)/.test(m.text())) errors.push(who + ' console: ' + m.text()); });
+  // 400/401/403/404 responses are provoked on purpose by this story (wrong passwords, rotated links)
+  p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource.*status of (400|401|403|404)/.test(m.text())) errors.push(who + ' console: ' + m.text()); });
   return p;
 };
 const shot = (p, name, full = false) => p.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
@@ -60,7 +62,10 @@ test('admin logs in and uploads a PDF', async () => {
 });
 
 test('admin can rotate a page by quarter turns and by single degrees', async () => {
-  const dims = async () => { const b = await admin.locator('.wrap canvas').boundingBox(); if (!b) throw new Error('no canvas'); return [Math.round(b.width), Math.round(b.height)]; };
+  const dims = async () => { // the canvas element is swapped on every redraw, so retry if we caught it mid-swap
+    for (let i = 0; i < 30; i++) { const b = await admin.locator('.wrap canvas').boundingBox().catch(() => null); if (b) return [Math.round(b.width), Math.round(b.height)]; await admin.waitForTimeout(100); }
+    throw new Error('no canvas');
+  };
   const [w0, h0] = await dims(); expect(h0).toBeGreaterThan(w0); // portrait
   await admin.click('button[title="Rotate 90° clockwise"]');
   await expect.poll(async () => { const [w, h] = await dims(); return w > h; }).toBe(true); // landscape now
@@ -81,6 +86,7 @@ test('admin places fields by double-click and configures prefill modes', async (
   const defs = [
     ['Full name', 'text', 'browser', 150, 700], ['Date', 'date', 'today', 150, 670], ['Reference', 'text', 'url', 400, 670],
     ['Address', 'textarea', 'browser', 150, 640], ['Birthday', 'date', 'instance', 400, 640], ['Signature', 'image', 'browser', 400, 520], ['Issued by', 'text', 'instance', 150, 560],
+    ['Agree', 'checkbox', 'none', 150, 500],
   ];
   for (const [label, type, pre, x, y] of defs) {
     await admin.evaluate(() => scrollTo(0, 0));
@@ -94,9 +100,9 @@ test('admin places fields by double-click and configures prefill modes', async (
     if (label === 'Full name') await admin.locator('#fp label.chk input').first().check(); // Required
     await expect(admin.locator('.fitem')).toHaveCount(defs.indexOf(defs.find((d) => d[0] === label)) + 1);
   }
-  await expect(admin.locator('.mk')).toHaveCount(7);
+  await expect(admin.locator('.mk')).toHaveCount(8);
   // keys are derived from labels
-  await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('issued_by');
+  await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('agree'); // the last field placed
   // "today" is only offered for date fields
   await expect(admin.locator('#fp select').last().locator('option[value=today]')).toHaveCount(0);
   await admin.locator('.fitem', { hasText: 'Date' }).click();
@@ -109,7 +115,26 @@ test('admin places fields by double-click and configures prefill modes', async (
   await expect(admin.locator('#fp label.chk')).toHaveCount(0); // neither "required" nor "hide"
   await admin.fill('#fp textarea', 'Office copy - do not hand out');
   await expect(admin.locator('.fitem', { hasText: 'Footer' }).locator('.tag')).toHaveText('fixed text');
-  await expect(admin.locator('.mk')).toHaveCount(8);
+  await expect(admin.locator('.mk')).toHaveCount(9);
+  // default image for an image field (a stamp), shown to users as a replaceable default
+  await admin.click('text=Add field');
+  await admin.fill('#fp input[type=text] >> nth=0', 'Stamp');
+  await admin.locator('#fp select').nth(0).selectOption('image');
+  await admin.locator('#fp select').last().selectOption('instance');
+  await admin.locator('#fp label.chk', { hasText: 'Hide on the form' }).locator('input').uncheck();
+  await admin.locator('#fp input[type=file]').setInputFiles({ name: 'stamp.png', mimeType: 'image/png', buffer: PNG });
+  await expect(admin.locator('#fp .thumb')).toBeVisible();
+  await expect(admin.locator('#fp button', { hasText: 'Replace image' })).toBeVisible();
+  // a throw-away field: key editing and date format, then removal
+  await admin.click('text=Add field');
+  await admin.locator('#fp select').nth(0).selectOption('date');
+  await admin.locator('#fp select').nth(1).selectOption('DD/MM/YYYY');
+  await admin.fill('#fp input[type=text] >> nth=1', 'Custom Key'); await admin.keyboard.press('Tab');
+  await expect(admin.locator('#fp input[type=text]').nth(1)).toHaveValue('custom_key'); // normalised on blur
+  await expect(admin.locator('.mk')).toHaveCount(11);
+  await admin.click('text=Remove field');
+  await expect(admin.locator('.mk')).toHaveCount(10);
+  await admin.click('button:has-text("›")'); await admin.click('button:has-text("‹")'); // single page: no-ops
   // image fields never offer link prefill
   await admin.locator('.fitem', { hasText: 'Signature' }).click();
   await expect(admin.locator('#fp select').last().locator('option[value=url]')).toHaveCount(0);
@@ -148,9 +173,30 @@ test('admin saves metadata and gets a direct link', async () => {
   await admin.waitForLoadState('networkidle'); await shot(admin, '2-editor', true);
   link = await admin.locator('input[readonly]').inputValue();
   expect(link).toBe('http://127.0.0.1:8099/d/sample-request');
+  await admin.locator('button', { hasText: 'Copy' }).first().click(); await expect(admin.locator('#toast')).toHaveText('Link copied');
+  // unsaved changes: navigating away asks first
+  await admin.fill('input[placeholder^="e.g."]', 'school, demo, extra');
+  admin.once('dialog', (d) => d.dismiss()); await admin.click('#nav a:has-text("Documents")');
+  await expect(admin.locator('.wrap canvas')).toBeVisible(); // stayed
+  admin.once('dialog', (d) => d.accept()); await admin.click('#nav a:has-text("Documents")');
+  await expect(admin.locator('table')).toBeVisible(); // left, change discarded
+  await admin.goto('/admin' + docHash);
   // data survives a reload
-  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(8);
+  await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(10);
   await expect(admin.locator('input[placeholder^="e.g."]')).toHaveValue('school, demo');
+  // replacing the template keeps the fields; with unsaved changes it asks first
+  await admin.locator('input[accept="application/pdf,.pdf"]').last().setInputFiles(PDF);
+  await expect(admin.locator('#toast')).toHaveText('PDF replaced');
+  await expect(admin.locator('.mk')).toHaveCount(10);
+  await admin.fill('input[placeholder^="e.g."]', 'school, demo, dirty');
+  admin.once('dialog', (d) => d.dismiss());
+  await admin.locator('input[accept="application/pdf,.pdf"]').last().setInputFiles(PDF);
+  await expect(admin.locator('button.pri')).toHaveText('Save changes'); // declined: nothing replaced, still dirty
+  admin.once('dialog', (d) => d.accept());
+  await admin.locator('input[accept="application/pdf,.pdf"]').last().setInputFiles(PDF);
+  await expect(admin.locator('#toast')).toHaveText('PDF replaced');
+  await expect(admin.locator('button.pri')).toHaveText('Saved');
+  await admin.reload(); await expect(admin.locator('input[placeholder^="e.g."]')).toHaveValue('school, demo');
 });
 
 test('admin configures the network printer', async () => {
@@ -160,6 +206,15 @@ test('admin configures the network printer', async () => {
   await admin.locator('label.chk input').check();
   await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
   await shot(admin, '3-settings');
+  // the admin password is stored in db.json on this instance, so it can be changed here
+  await admin.fill('input[autocomplete=current-password]', 'wrong'); await admin.fill('input[autocomplete=new-password]', 'test-pass-456');
+  await admin.click('text=Change password'); await expect(admin.locator('#toast')).toHaveText('Current password is wrong');
+  await admin.fill('input[autocomplete=current-password]', PASSWORD);
+  await admin.click('text=Change password'); await expect(admin.locator('#toast')).toHaveText('Password changed');
+  await cov.snapshot(admin); // "Log out" reloads the page in place
+  await admin.click('text=Log out'); await expect(admin.locator('input[type=password]')).toBeVisible();
+  await admin.fill('input[type=password]', 'test-pass-456'); await admin.click('button.pri');
+  await expect(admin.locator('#nav')).toContainText('Settings');
   await admin.goto('/admin#'); await admin.reload();
   await expect(admin.locator('table')).toBeVisible();
   await expect(admin.locator('tbody tr')).toHaveCount(1);
@@ -181,7 +236,7 @@ test('public index lists the document and filters by tag', async () => {
 });
 
 test('form prefills from the link and from fixed values, validates required fields', async () => {
-  await user.goto(link + '#reference=REF-4711&birthday=24.12.1985'); // link values may use the display notation
+  await user.goto(link + '#reference=REF-4711&birthday=24.12.1985&agree=1'); // link values may use the display notation
   await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_reference')).toHaveValue('REF-4711');
   await expect(user.locator('#f_issued_by')).toHaveValue('Office Bietigheim');
@@ -191,8 +246,11 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#f_date')).toHaveValue(TODAY);
   await expect(user.locator('#f_birthday')).toHaveValue('1985-12-24'); // from the link, normalised for the date input
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
-  await expect(user.locator('.panel label')).toHaveCount(7);
-  await expect(user.locator('.thumb')).toBeHidden(); // no signature yet
+  await expect(user.locator('.panel label')).toHaveCount(9);
+  await expect(user.locator('#f_agree')).toBeChecked(); // checkbox from the link
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden(); // no signature yet
+  await expect(user.locator('.imgbox:has(#f_stamp) .thumb')).toBeVisible(); // the admin's default stamp
+  await expect(user.getByText('A default image is provided')).toBeVisible();
   await expect(user.locator('#f_full_name')).toHaveValue('');
   await user.click('button.pri'); // Print with the required field empty
   await expect(user.locator('#toast.bad')).toContainText('Please fill in: Full name');
@@ -202,8 +260,8 @@ test('form prefills from the link and from fixed values, validates required fiel
     await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
   });
   await settle(user, () => user.locator('#f_signature').setInputFiles({ name: 'sig.png', mimeType: 'image/png', buffer: PNG }));
-  await expect(user.locator('.thumb')).toBeVisible();
-  await expect(user.locator('.imgbox button', { hasText: 'Replace image' })).toBeVisible();
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
+  await expect(user.locator('.imgbox:has(#f_signature) button', { hasText: 'Replace image' })).toBeVisible();
   await shot(user, '6-form', true);
 });
 
@@ -239,7 +297,7 @@ test('browser-remembered values survive a reload, link values do not', async () 
   await expect(user.locator('#f_address')).toHaveValue(/74321/);
   await expect(user.locator('#f_reference')).toHaveValue('');
   await expect(user.locator('#f_birthday')).toHaveValue('1990-02-01'); // back to the fixed value without the link
-  await expect(user.locator('.thumb')).toBeVisible(); // the signature is remembered in this browser
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible(); // the signature is remembered in this browser
   await expect(user.locator('#f_date')).toHaveValue(TODAY); // "today" is recomputed on every open, not remembered
 });
 
@@ -252,9 +310,19 @@ test('image print fallback renders pages and calls window.print', async () => {
   await p.evaluate(() => /** @type {any} */ (window).stampfillImagePrint());
   expect(await p.evaluate(() => /** @type {any} */ (window).__printed)).toBe(true);
   await expect(p.locator('#printArea img')).toHaveCount(1);
+  // the Print button takes the same route in a browser without an inline PDF viewer (headless Chromium)
+  await p.evaluate(() => { /** @type {any} */ (window).__printed = false; });
+  await p.click('button.pri');
+  await expect.poll(() => p.evaluate(() => /** @type {any} */ (window).__printed)).toBe(true);
   await p.emulateMedia({ media: 'print' });
   await p.pdf({ path: path.join(SHOTS, '..', 'browser-print.pdf'), preferCSSPageSize: true, printBackground: true });
-  await p.close();
+  await p.emulateMedia({ media: 'screen' });
+  // desktop Chromium with its PDF viewer prints the vector PDF through a hidden iframe
+  await p.addInitScript(() => { Object.defineProperty(navigator, 'pdfViewerEnabled', { get: () => true }); });
+  await p.goto(link); await expect(p.locator('.preview canvas')).toBeVisible();
+  await p.click('button.pri');
+  await expect(p.locator('#pf')).toHaveCount(1, { timeout: 10000 });
+  await cov.stop(p); await p.close();
 });
 
 test('"Forget saved values" clears browser prefill', async () => {
@@ -264,7 +332,16 @@ test('"Forget saved values" clears browser prefill', async () => {
   await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_full_name')).toHaveValue('');
   await expect(user.locator('#f_address')).toHaveValue('');
-  await expect(user.locator('.thumb')).toBeHidden();
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden();
+  // files that are not images are refused with a message
+  await user.locator('#f_signature').setInputFiles({ name: 'sig.png', mimeType: 'image/png', buffer: Buffer.from('this is not an image') });
+  await expect(user.locator('#toast.bad')).toHaveText('That file is not a PNG or JPEG image');
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden();
+  // an image can also be removed on its own
+  await settle(user, () => user.locator('#f_signature').setInputFiles({ name: 'sig.png', mimeType: 'image/png', buffer: PNG }));
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
+  await settle(user, () => user.locator('.imgbox:has(#f_signature) button', { hasText: 'Remove' }).click());
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden();
 });
 
 test('form works on a phone-sized screen', async () => {
@@ -275,7 +352,7 @@ test('form works on a phone-sized screen', async () => {
   await expect(mp.locator('#f_full_name')).toHaveValue('Mobile User');
   await mp.waitForLoadState('networkidle'); await expect(mp.locator('.preview')).not.toHaveClass(/busy/);
   await shot(mp, '7-form-mobile', true);
-  await ctx.close();
+  await cov.stop(mp); await ctx.close();
 });
 
 test('form follows the dark colour scheme', async () => {
@@ -287,7 +364,7 @@ test('form follows the dark colour scheme', async () => {
   const bg = await dp.evaluate(() => getComputedStyle(document.body).backgroundColor);
   expect(bg).toBe('rgb(17, 19, 23)');
   await shot(dp, '8-form-dark');
-  await ctx.close();
+  await cov.stop(dp); await ctx.close();
 });
 
 test('admin can switch off network printing and protect the form with a password', async () => {
@@ -306,10 +383,19 @@ test('admin can switch off network printing and protect the form with a password
   await expect(v.locator('button', { hasText: 'Print at school' })).toHaveCount(0); // switched off for this form
   await v.reload(); await expect(v.locator('.preview canvas')).toBeVisible(); // stays unlocked in this browser
   await v.goto('/'); await expect(v.locator('.card .tag', { hasText: 'password' })).toHaveCount(1);
-  await ctx.close();
+  await cov.stop(v); await ctx.close();
   // the existing user context has no unlock cookie yet
   await user.goto(link); await expect(user.getByText('This form is protected')).toBeVisible();
   await user.fill('input[type=password]', 'open-sesame'); await user.click('button.pri'); await expect(user.locator('.preview canvas')).toBeVisible();
+  // removing the password opens the form for everyone again
+  await admin.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(admin.locator('input[placeholder^="Password will be removed"]')).toBeVisible();
+  await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
+  await expect(admin.locator('input[placeholder="No password"]')).toBeVisible();
+  const ctx2 = await browser.newContext({ baseURL: 'http://127.0.0.1:8099' });
+  const v2 = track(await ctx2.newPage(), 'visitor2');
+  await v2.goto(link); await expect(v2.locator('.preview canvas')).toBeVisible();
+  await cov.stop(v2); await ctx2.close();
 });
 
 test('admin rotates the link and deletes the document', async () => {
@@ -323,8 +409,24 @@ test('admin rotates the link and deletes the document', async () => {
   await admin.click('button.danger:has-text("Delete")');
   await expect(admin.getByText('No documents yet')).toBeVisible();
   await user.goto('/'); await expect(user.getByText('No documents are listed here')).toBeVisible();
+  // a template without fields is still printable
+  await admin.setInputFiles('input[type=file]', PDF);
+  await expect(admin.locator('.wrap canvas')).toBeVisible();
+  await expect(admin.getByText('No fields yet')).toBeVisible();
+  const bare = await admin.locator('input[readonly]').inputValue();
+  await user.goto(bare); await expect(user.locator('.preview canvas')).toBeVisible();
+  await expect(user.getByText('This document has no fields to fill in')).toBeVisible();
+  await admin.click('button.danger:has-text("Delete")');
+  await expect(admin.getByText('No documents yet')).toBeVisible();
 });
 
 test('no browser errors were logged', () => {
   expect(errors).toEqual([]);
+});
+
+test('the browser tests execute most of the client code', async () => {
+  const c = await cov.finish();
+  console.log('client coverage: ' + c.scripts.map((s) => s.kind + ' ' + s.pct + '%').join(', ') + ' — total ' + c.total.pct + '%');
+  expect(c.scripts.length).toBe(2);
+  for (const s of c.scripts) expect(s.pct, s.kind).toBeGreaterThanOrEqual(85);
 });

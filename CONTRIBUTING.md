@@ -24,6 +24,25 @@ The end-to-end run starts its own instance on port 8099 with a fresh data direct
 `test-results/screenshots/`. To refresh the screenshots in the README run the suite with
 `SCREENSHOTS_DIR=docs/screenshots`.
 
+## Coverage
+
+`npm run test:unit` runs under c8 and fails below the thresholds in `.c8rc.json` (95% lines,
+functions and statements, 85% branches of `stampfill.js`). The report lands in
+`test-results/coverage/`; `npm run test:unit:fast` skips it.
+
+The browser code cannot be seen by c8 (it is a string inside `stampfill.js`), so the Playwright
+suite measures it itself through Chromium's V8 coverage (`test/e2e/coverage.js`). The last test
+prints the executed share of the public and admin page scripts, writes
+`test-results/client-coverage.json` with the largest unexecuted stretches, and fails below 85% per
+script. If you add client code, add the step that exercises it to `test/e2e/stampfill.spec.js`.
+
+## Stored data and upgrades
+
+Every change to what is stored in `db.json` or `DATA_DIR` needs a step in `migrate()` in
+`stampfill.js` and must keep `test/unit/migrate.test.js` green, which boots the service from a
+1.0.0 data directory (`test/fixtures/db-v1.json`). Never rename or drop a stored property without
+a migration; installations upgrade in place.
+
 ## Guidelines
 
 - Keep the single-file layout: server and both pages live in `stampfill.js`. Client code sits in

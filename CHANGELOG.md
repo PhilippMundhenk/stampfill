@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Coverage gates: c8 on the server (95% lines, 85% branches) and V8 coverage of the inline page
+  scripts from the browser suite (85% per page); a process-level test for startup checks and
+  shutdown; a mock printer that can simulate failures.
 - Page rotation per page in the editor: quarter turns and arbitrary angles (e.g. 2.5°) to
   straighten skewed scans, stored with the document and applied on render.
 - Optional readable link name per document (`/d/library-card-request`); links stay random
