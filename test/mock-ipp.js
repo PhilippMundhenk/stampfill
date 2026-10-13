@@ -70,4 +70,8 @@ module.exports = { createMockIpp, parseRequest };
 if (require.main === module) {
   const port = +process.env.MOCK_IPP_PORT || 6310, out = process.env.MOCK_IPP_OUT || 'test-results/ipp';
   createMockIpp(out).listen(port, '127.0.0.1', () => console.log('mock IPP printer on http://127.0.0.1:' + port + '/printers/Test  (output: ' + out + ')'));
+  if (process.env.MOCK_IPP_RASTER_PORT) { // a second printer that only takes raster formats, like many home printers
+    const rp = +process.env.MOCK_IPP_RASTER_PORT;
+    createMockIpp(out + '-raster', { pdf: false }).listen(rp, '127.0.0.1', () => console.log('mock raster-only printer on http://127.0.0.1:' + rp + '/ipp/print'));
+  }
 }

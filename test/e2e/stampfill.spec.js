@@ -26,7 +26,7 @@ const track = (/** @type {import('@playwright/test').Page} */ p, who) => {
   cov.start(p);
   p.on('pageerror', (e) => errors.push(who + ' pageerror: ' + e.message));
   // 400/401/403/404 responses are provoked on purpose by this story (wrong passwords, rotated links)
-  p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource.*status of (400|401|403|404)/.test(m.text())) errors.push(who + ' console: ' + m.text()); });
+  p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource.*status of (400|401|403|404|502)/.test(m.text())) errors.push(who + ' console: ' + m.text()); });
   return p;
 };
 const shot = (p, name, full = false) => p.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
@@ -246,7 +246,12 @@ test('admin saves metadata and gets a direct link', async () => {
 test('admin configures the network printer', async () => {
   await admin.goto('/admin#settings');
   await admin.fill('input[type=url]', 'http://127.0.0.1:6310/printers/Test');
-  await admin.click('text=Test printer');
+  // the printer test explains what a printer accepts, in three flavours
+  await admin.fill('input[type=url]', 'http://127.0.0.1:1/printers/nowhere'); await admin.click('text=Test printer');
+  await expect(admin.locator('#ptest')).toContainText('not reachable');
+  await admin.fill('input[type=url]', 'http://127.0.0.1:6311/ipp/print'); await admin.click('text=Test printer');
+  await expect(admin.locator('#ptest')).toContainText('Does not take PDF');
+  await admin.fill('input[type=url]', 'http://127.0.0.1:6310/printers/Test'); await admin.click('text=Test printer');
   await expect(admin.locator('#ptest')).toContainText('Mock IPP printer — idle');
   await expect(admin.locator('#ptest')).toContainText('Takes PDF');
   await admin.fill('input[placeholder="Print at home"]', 'Print at school');
@@ -442,6 +447,7 @@ test("the form speaks the visitor's language and can be switched", async () => {
   const jp = track(await jctx.newPage(), 'japanese');
   await jp.goto(link); await expect(jp.locator('.preview canvas')).toBeVisible();
   await expect(jp.locator('html')).toHaveAttribute('lang', 'de'); await expect(jp.locator('.actions button.pri')).toHaveText('Drucken');
+  await jp.goto('/admin'); await expect(jp.locator('form.login h1')).toHaveText('Admin-Anmeldung'); // same fallback on the admin page
   await cov.stop(jp); await jctx.close();
   await admin.selectOption('#defLang', 'en'); await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
 });
@@ -507,6 +513,12 @@ test('admin rotates the link and deletes the document', async () => {
   const bare = await admin.locator('input[readonly]').inputValue();
   await user.goto(bare); await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.getByText('This document has no fields to fill in')).toBeVisible();
+  // a template whose only field is a hidden fixed value: nothing to fill in, still printable
+  await admin.click('text=Add field'); await admin.locator('#fp select').last().selectOption('instance');
+  await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Stamped by the office');
+  await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
+  await user.goto(bare); await expect(user.locator('.preview canvas')).toBeVisible();
+  await expect(user.getByText('Nothing to fill in here')).toBeVisible();
   await admin.click('button.danger:has-text("Delete")');
   await expect(admin.getByText('No documents yet')).toBeVisible();
 });

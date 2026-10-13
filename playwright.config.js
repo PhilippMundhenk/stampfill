@@ -16,7 +16,7 @@ module.exports = defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: [
-    { command: 'node test/mock-ipp.js', url: 'http://127.0.0.1:6310/', env: { MOCK_IPP_OUT: 'test-results/ipp' }, reuseExistingServer: false },
+    { command: 'node test/mock-ipp.js', url: 'http://127.0.0.1:6310/', env: { MOCK_IPP_OUT: 'test-results/ipp', MOCK_IPP_RASTER_PORT: '6311' }, reuseExistingServer: false },
     { command: 'node test/e2e/serve.js', url: 'http://127.0.0.1:8099/healthz', reuseExistingServer: false },
   ],
 });
