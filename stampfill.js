@@ -66,8 +66,6 @@ function checkPw(pw) {
   if (process.env.ADMIN_PASSWORD) return sameStr(hashPw(pw, 'env'), hashPw(process.env.ADMIN_PASSWORD, 'env'));
   return !!db.auth && sameStr(hashPw(pw, db.auth.split(':')[0]), db.auth);
 }
-for (const d of db.docs) d.fields = cleanFields(d.fields, d.pages);
-pruneImages();
 if (!process.env.ADMIN_PASSWORD && !db.auth) {
   const pw = rid(12); db.auth = hashPw(pw);
   console.log('\n  Generated admin password: ' + pw + '\n  (change it under /admin > Settings)\n');
@@ -386,6 +384,20 @@ async function route(req, res) {
   throw new HttpErr(404, 'Not found');
 }
 
+// ---------------------------------------------------------------- migration of data written by earlier versions
+// Runs once at startup, after every helper above exists. Keep it idempotent: it is the only place
+// that upgrades db.json, and test/unit/migrate.test.js boots from a 1.0.0 data directory.
+function migrate() {
+  db.settings = { ...DEFAULTS, ...db.settings };
+  for (const doc of db.docs) {
+    doc.description = str(doc.description, 500); doc.tags = cleanTags(doc.tags); doc.listed = !!doc.listed;
+    doc.pages = Math.max(1, Math.round(num(doc.pages, 1, 1, 10000)));
+    doc.fields = cleanFields(doc.fields, doc.pages);
+  }
+  pruneImages(); save();
+}
+migrate();
+
 const server = http.createServer((req, res) => {
   route(req, res).catch((e) => {
     if (!(e instanceof HttpErr)) console.error(e);
@@ -406,7 +418,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, keyOf, fmtDate, toIso, cleanPrefill, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, migrate, keyOf, fmtDate, toIso, cleanPrefill, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
