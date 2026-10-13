@@ -53,6 +53,10 @@ The screenshots come from a demo instance that `npm run screenshots` builds from
 - **Small footprint**: single process, JSON file plus the uploaded PDFs on disk, around 50 MB
   resident memory. Pages and assets are served gzip-compressed from memory.
 - **Light and dark**: follows the system colour scheme, works on phones, respects reduced motion.
+- **Languages**: English, German, Turkish, Arabic (right-to-left), Russian, Ukrainian, Greek and
+  Polish. The pages follow the browser language, a switcher in the header remembers a choice, and
+  Settings has an instance default. Stamped text in Greek, Cyrillic or accented Latin letters uses
+  a bundled TrueType font; Arabic and other scripts need a font at `DATA_DIR/font.ttf` (see below).
 
 ## Quick start
 
@@ -83,6 +87,13 @@ ADMIN_PASSWORD=change-me node stampfill.js
 
 Needs Node.js 22 or newer. If `ADMIN_PASSWORD` is not set, a random password is generated on
 first start, printed to the log once, and can be changed in the admin settings.
+
+### Translations
+
+Translations live in `locales/<language>.json` as a flat map from the English source string to
+the translation; a missing key shows the English text. They were produced with machine help and
+reviewed lightly, so corrections are welcome: edit the file and open a pull request. A unit test
+fails when a locale misses a string the pages use.
 
 ## Configuration
 

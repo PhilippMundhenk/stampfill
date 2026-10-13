@@ -41,7 +41,7 @@ test('the inline page scripts parse (they live inside a string, so node --check 
     const html = await (await fetch(base + p)).text();
     const m = /<script type="module">([\s\S]*?)<\/script>/.exec(html); assert.ok(m, p + ' has a module script');
     const src = m[1].replace(/^import \* as pdfjs from '[^']+';/m, 'const pdfjs = {};');
-    assert.doesNotThrow(() => new vm.Script(src, { filename: 'page' + p.replace('/', '-') + '.js' }), p + ' script must parse');
+    assert.doesNotThrow(() => new vm.Script('(async () => {' + src + '\n})', { filename: 'page' + p.replace('/', '-') + '.js' }), p + ' script must parse'); // module with top-level await
     assert.ok(!/`|\$\{/.test(m[1]), p + ' script must not contain backticks or dollar-brace (String.raw template)');
   }
 });

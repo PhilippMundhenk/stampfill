@@ -20,6 +20,9 @@ All notable changes to this project are documented here. The format follows
   `ADMIN_PASSWORD_FILE`; an append-only audit log.
 
 ### Added
+- Interface in German, Turkish, Arabic (right-to-left), Russian, Ukrainian, Greek and Polish, following
+  the browser language with a switcher in the header and an instance default in Settings. Non-Latin
+  values print with a bundled TrueType fallback font.
 - Field type "Signature": users draw on screen (touch or mouse, with undo and clear; the drawing
   is trimmed to the ink on a transparent background) or upload a picture.
 - Documentation: design overview (`docs/design.md`), architecture decision records

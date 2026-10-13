@@ -401,6 +401,30 @@ test('form works on a phone-sized screen', async () => {
   await cov.stop(mp); await ctx.close();
 });
 
+test("the form speaks the visitor's language and can be switched", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1320, height: 900 }, locale: 'de-DE', baseURL: 'http://127.0.0.1:8099' });
+  const dp = track(await ctx.newPage(), 'german');
+  await dp.goto(link); await expect(dp.locator('.preview canvas')).toBeVisible();
+  await expect(dp.locator('.actions button.pri')).toHaveText('Drucken'); // browser language
+  await expect(dp.locator('html')).toHaveAttribute('lang', 'de');
+  await dp.selectOption('#langSel', 'ar'); await expect(dp.locator('.preview canvas')).toBeVisible();
+  await expect(dp.locator('html')).toHaveAttribute('dir', 'rtl'); await expect(dp.locator('.actions button.pri')).toHaveText('طباعة');
+  await dp.selectOption('#langSel', 'en'); await expect(dp.locator('.preview canvas')).toBeVisible();
+  await expect(dp.locator('.actions button.pri')).toHaveText('Print'); await expect(dp.locator('html')).toHaveAttribute('dir', 'ltr');
+  await dp.goto('/admin'); await expect(dp.locator('form.login h1')).toHaveText('Admin login'); // the choice is remembered
+  await dp.selectOption('#langSel', 'de'); await expect(dp.locator('form.login h1')).toHaveText('Admin-Anmeldung'); // the admin page too
+  await cov.stop(dp); await ctx.close();
+  // the instance default applies to visitors whose browser language is not available
+  await admin.goto('/admin#settings'); await admin.selectOption('#defLang', 'de');
+  await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
+  const jctx = await browser.newContext({ viewport: { width: 1320, height: 900 }, locale: 'ja-JP', baseURL: 'http://127.0.0.1:8099' });
+  const jp = track(await jctx.newPage(), 'japanese');
+  await jp.goto(link); await expect(jp.locator('.preview canvas')).toBeVisible();
+  await expect(jp.locator('html')).toHaveAttribute('lang', 'de'); await expect(jp.locator('.actions button.pri')).toHaveText('Drucken');
+  await cov.stop(jp); await jctx.close();
+  await admin.selectOption('#defLang', 'en'); await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
+});
+
 test('form follows the dark colour scheme', async () => {
   const ctx = await browser.newContext({ viewport: { width: 1320, height: 900 }, colorScheme: 'dark' });
   const dp = track(await ctx.newPage(), 'dark');

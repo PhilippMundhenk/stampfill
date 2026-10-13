@@ -15,6 +15,7 @@ ENV NODE_ENV=production DATA_DIR=/data PORT=8080 HOST=0.0.0.0
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json stampfill.js LICENSE ./
+COPY locales/ ./locales/
 RUN mkdir -p /data && chown node:node /data
 VOLUME /data
 EXPOSE 8080

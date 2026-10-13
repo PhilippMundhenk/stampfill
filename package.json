@@ -29,7 +29,8 @@
     "node": ">=22"
   },
   "files": [
-    "stampfill.js"
+    "stampfill.js",
+    "locales/"
   ],
   "scripts": {
     "start": "node stampfill.js",

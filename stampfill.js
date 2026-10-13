@@ -37,6 +37,7 @@ const PDFS = path.join(DATA, 'pdfs');
 const IMAGES = path.join(DATA, 'images'); // default images of image fields (signatures, stamps)
 const DBF = path.join(DATA, 'db.json');
 const FONT = path.join(DATA, 'font.ttf');
+const FALLBACK_FONT = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts', 'LiberationSans-Regular.ttf');
 const MAX_PDF = (+process.env.MAX_PDF_MB || 25) * 1024 * 1024;
 const PDFJS = path.dirname(require.resolve('pdfjs-dist/package.json'));
 const SESSION_MS = 12 * 3600 * 1000; // admin sessions: 12 h, renewed on use
@@ -59,7 +60,9 @@ catch (e) {
   process.exit(1);
 }
 const rid = (n = 9) => crypto.randomBytes(n).toString('base64url');
-const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home' };
+const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home', language: 'en' };
+const LANGS = ['en', 'de', 'tr', 'ar', 'ru', 'uk', 'el', 'pl']; // locales/<lang>.json; English is the source language
+const LOCALES = Object.fromEntries(LANGS.filter((l) => l !== 'en').map((l) => [l, fs.readFileSync(path.join(__dirname, 'locales', l + '.json'))]));
 let db = { secret: rid(32), auth: null, settings: { ...DEFAULTS }, docs: [] };
 if (fs.existsSync(DBF)) { const l = JSON.parse(fs.readFileSync(DBF, 'utf8')); db = Object.assign(db, l, { settings: { ...DEFAULTS, ...(l.settings || {}) } }); }
 const save = () => { fs.writeFileSync(DBF + '.tmp', JSON.stringify(db, null, 1), { mode: 0o600 }); fs.renameSync(DBF + '.tmp', DBF); };
@@ -276,11 +279,14 @@ function fmtDate(v, fmt) {
 async function renderPdf(doc, fields, values, rotation = doc.rotation, preview = false) {
   const pdf = await PDFDocument.load(readTemplate(doc.id));
   if (rotation && rotation.some(Boolean)) await applyRotation(pdf, rotation);
-  let font;
+  let font, fallback = null;
   if (fontkit && fs.existsSync(FONT)) { pdf.registerFontkit(fontkit); font = await pdf.embedFont(fs.readFileSync(FONT), { subset: true }); }
   else font = await pdf.embedFont(StandardFonts.Helvetica);
   const ok = new Map();
-  const encodable = (ch) => { if (!ok.has(ch)) { try { font.encodeText(ch); ok.set(ch, true); } catch (e) { ok.set(ch, false); } } return ok.get(ch); };
+  const canEncode = (fnt, ch) => { try { fnt.encodeText(ch); return true; } catch (e) { return false; } };
+  const encodable = (ch) => { if (!ok.has(ch)) ok.set(ch, canEncode(font, ch)); return ok.get(ch); };
+  // Liberation Sans (shipped with pdf.js, SIL OFL) covers Latin, Greek and Cyrillic; used per field when Helvetica cannot
+  const withFallback = async () => { if (!fallback && fontkit && fs.existsSync(FALLBACK_FONT)) { pdf.registerFontkit(fontkit); fallback = await pdf.embedFont(fs.readFileSync(FALLBACK_FONT), { subset: true }); } return fallback; };
   const pages = pdf.getPages();
   for (const f of fields) {
     const page = pages[f.page - 1]; if (!page) continue;
@@ -305,10 +311,13 @@ async function renderPdf(doc, fields, values, rotation = doc.rotation, preview =
     if (f.type === 'checkbox') text = text && text !== '0' && text !== 'false' ? 'X' : '';
     else if (f.type === 'date') text = fmtDate(toIso(text, f.dateFormat), f.dateFormat);
     else if (f.type !== 'textarea' && f.type !== 'static') text = text.replace(/\s+/g, ' ');
-    text = [...text.replace(/\r/g, '').replace(/\t/g, ' ')].map((ch) => (ch === '\n' || encodable(ch) ? ch : '?')).join('').trim();
+    text = text.replace(/\r/g, '').replace(/\t/g, ' ');
+    let useFont = font;
+    if ([...text].some((ch) => ch !== '\n' && !encodable(ch))) { const fb = await withFallback(); if (fb) useFont = fb; }
+    text = [...text].map((ch) => (ch === '\n' || (useFont === font ? encodable(ch) : canEncode(useFont, ch)) ? ch : '?')).join('').trim();
     if (!text) continue;
     page.drawText(text, {
-      x: f.x, y: f.y, size: f.size, font, color: rgb(0, 0, 0), lineHeight: f.size * 1.2,
+      x: f.x, y: f.y, size: f.size, font: useFont, color: rgb(0, 0, 0), lineHeight: f.size * 1.2,
       maxWidth: f.maxWidth > 0 ? f.maxWidth : undefined, rotate: degrees(page.getRotation().angle),
     });
   }
@@ -409,8 +418,10 @@ async function route(req, res) {
   let a;
   if (secure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (m === 'GET') {
-    if (p === '/' || /^\/d\/[\w-]+$/.test(p)) return sendStatic(req, res, 'public', PUBLIC_HTML.html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PUBLIC_HTML.csp });
-    if (p === '/admin' || p === '/admin/') return sendStatic(req, res, 'admin', ADMIN_HTML.html, 'text/html; charset=utf-8', { 'Content-Security-Policy': ADMIN_HTML.csp });
+    const L = db.settings.language || 'en', withLang = (h) => h.replace('<html lang="en"', '<html lang="' + L + '"'); // the instance default; the script may switch
+    if (p === '/' || /^\/d\/[\w-]+$/.test(p)) return sendStatic(req, res, 'public:' + L, withLang(PUBLIC_HTML.html), 'text/html; charset=utf-8', { 'Content-Security-Policy': PUBLIC_HTML.csp });
+    if (p === '/admin' || p === '/admin/') return sendStatic(req, res, 'admin:' + L, withLang(ADMIN_HTML.html), 'text/html; charset=utf-8', { 'Content-Security-Policy': ADMIN_HTML.csp });
+    if ((a = /^\/locales\/([a-z]{2})\.json$/.exec(p)) && LOCALES[a[1]]) return sendStatic(req, res, 'locale:' + a[1], LOCALES[a[1]], 'application/json; charset=utf-8', { 'Cache-Control': 'public, max-age=3600' });
     if (p === '/healthz') return json(res, 200, isAdmin(req) ? { ok: true, version: VERSION, docs: db.docs.length } : { ok: true });
     if (p.startsWith('/vendor/')) return vendor(req, res, p.slice(8));
   } else if (req.headers['x-requested-with'] !== 'stampfill') throw new HttpErr(403, 'Forbidden'); // CSRF guard
@@ -482,7 +493,8 @@ async function route(req, res) {
     if (m === 'PUT') {
       const b = await readJson(req), u = str(b.printerUrl, 500).trim();
       if (u && !/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
-      db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint, printButton: str(b.printButton, 40).trim() || DEFAULTS.printButton }; save();
+      db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint, printButton: str(b.printButton, 40).trim() || DEFAULTS.printButton,
+        language: LANGS.includes(b.language) ? b.language : 'en' }; save();
       audit(req, 'settings.update', { printerUrl: u, publicPrint: db.settings.publicPrint });
     }
     if (m === 'GET' || m === 'PUT') return json(res, 200, db.settings);
@@ -590,7 +602,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, migrate, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -604,6 +616,9 @@ header a{color:var(--ink);text-decoration:none;transition:color .15s}header a:ho
 #home{display:inline-flex;align-items:center;gap:9px;font-weight:650;letter-spacing:-.01em}#home svg{width:22px;height:22px;color:var(--acc);flex:none}
 #nav{gap:4px}#nav a{padding:6px 10px;border-radius:7px}#nav a:hover{background:var(--acc-soft)}
 .sp{flex:1}
+#langSel{width:auto;padding:5px 28px 5px 9px;font-size:13px;background-position:right 8px center}
+[dir=rtl] #langSel{background-position:left 8px center;padding:5px 9px 5px 28px}
+[dir=rtl] .stage,[dir=rtl] .wrap,[dir=rtl] .preview{direction:ltr}
 main{max-width:1240px;margin:0 auto;padding:24px 20px 64px;animation:rise .25s ease-out both}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin:4px 0 16px}
@@ -684,8 +699,24 @@ details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([o
 `;
 
 const LOGO_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 22h14"/><path d="M19.27 13.73A2.5 2.5 0 0 0 17.5 13h-11a2.5 2.5 0 0 0-2.5 2.5V17h16v-1.5c0-.66-.26-1.3-.73-1.77Z"/><path d="M14 13V8.5a2 2 0 1 0-4 0V13"/></svg>';
-const LIB = 'const LOGO = ' + JSON.stringify(LOGO_SVG) + ';\n' + String.raw`
+const LIB = 'const LOGO = ' + JSON.stringify(LOGO_SVG) + ';\nconst LANGS = ' + JSON.stringify({ en: 'English', de: 'Deutsch', tr: 'Türkçe', ar: 'العربية', ru: 'Русский', uk: 'Українська', el: 'Ελληνικά', pl: 'Polski' }) + ';\n' + String.raw`
 import * as pdfjs from '/vendor/pdf.mjs';
+// ---- language: the user's choice, else the browser's, else the instance default (html lang); dictionary loaded before anything renders
+const LANG = (() => {
+  let v = null; try { v = localStorage.getItem('stampfill:lang'); } catch (e) {}
+  if (v && LANGS[v]) return v;
+  for (const l of navigator.languages || []) { const s = l.slice(0, 2).toLowerCase(); if (LANGS[s]) return s; }
+  return LANGS[document.documentElement.lang] ? document.documentElement.lang : 'en';
+})();
+const DICT = LANG === 'en' ? {} : await fetch('/locales/' + LANG + '.json').then(r => r.ok ? r.json() : {}).catch(() => ({}));
+const t = s => DICT[s] || s; // English source string in, translation out (or the English text when missing)
+document.documentElement.lang = LANG; document.documentElement.dir = LANG === 'ar' ? 'rtl' : 'ltr';
+{ // language switcher in the header
+  const sel = document.createElement('select'); sel.id = 'langSel'; sel.title = 'Language';
+  for (const k in LANGS) { const o = document.createElement('option'); o.value = k; o.textContent = LANGS[k]; o.selected = k === LANG; sel.append(o); }
+  sel.addEventListener('change', () => { try { localStorage.setItem('stampfill:lang', sel.value); } catch (e) {} location.reload(); });
+  const hdr = document.querySelector('header'); hdr.insertBefore(sel, hdr.querySelector('.sp').nextSibling);
+}
 pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.mjs';
 const $ = (s, r) => (r || document).querySelector(s);
 function h(tag, attrs, ...kids) {
@@ -712,8 +743,8 @@ async function api(method, url, body, raw) {
 }
 let toastT;
 function toast(msg, bad) { const t = $('#toast'); t.textContent = msg; t.className = 'show' + (bad ? ' bad' : ''); clearTimeout(toastT); toastT = setTimeout(() => t.className = '', bad ? 5000 : 2200); }
-const fail = (e) => toast(e.message || String(e), true);
-async function copyText(s) { try { await navigator.clipboard.writeText(s); toast('Link copied'); } catch (e) { prompt('Copy this link:', s); } }
+const fail = (e) => toast(t(e.message || String(e)), true);
+async function copyText(s) { try { await navigator.clipboard.writeText(s); toast(t('Link copied')); } catch (e) { prompt(t('Copy this link:'), s); } }
 function openPdf(buf) { return pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)), standardFontDataUrl: '/vendor/standard_fonts/', cMapUrl: '/vendor/cmaps/', cMapPacked: true, wasmUrl: '/vendor/wasm/', iccUrl: '/vendor/iccs/' }).promise; }
 // draws page n at the given CSS width; returns the CSS-pixel viewport (for coordinate conversion) plus the page size in points
 async function drawPage(pdf, n, canvas, cssWidth, density) {
@@ -748,12 +779,12 @@ async function listView() {
   const tags = [...new Set(docs.flatMap(d => d.tags))].sort((a, b) => a.localeCompare(b));
   const list = h('div', { class: 'cards' }), chips = h('div', { class: 'chips' });
   function draw() {
-    chips.replaceChildren(...(tags.length ? ['', ...tags] : []).map(t => h('button', { class: 'chip' + (t === tag ? ' on' : ''), onclick: () => { tag = t; history.replaceState(null, '', t ? '?tag=' + encodeURIComponent(t) : '/'); draw(); } }, t || 'All')));
+    chips.replaceChildren(...(tags.length ? ['', ...tags] : []).map(x => h('button', { class: 'chip' + (x === tag ? ' on' : ''), onclick: () => { tag = x; history.replaceState(null, '', x ? '?tag=' + encodeURIComponent(x) : '/'); draw(); } }, x || t('All'))));
     const shown = docs.filter(d => (!tag || d.tags.includes(tag)) && (!q || (d.title + ' ' + d.description + ' ' + d.tags.join(' ')).toLowerCase().includes(q)));
-    list.replaceChildren(...shown.map(d => h('a', { class: 'card', href: '/d/' + d.slug }, h('b', {}, d.title), h('p', {}, d.description), h('div', {}, d.tags.map(t => h('span', { class: 'tag' }, t)), d.protected && h('span', { class: 'tag', title: 'Needs a password' }, 'password')))));
-    if (!shown.length) list.append(h('p', { class: 'empty', style: 'grid-column:1/-1' }, docs.length ? 'No matching documents.' : 'No documents are listed here. Use the direct link you were given.'));
+    list.replaceChildren(...shown.map(d => h('a', { class: 'card', href: '/d/' + d.slug }, h('b', {}, d.title), h('p', {}, d.description), h('div', {}, d.tags.map(x => h('span', { class: 'tag' }, x)), d.protected && h('span', { class: 'tag', title: t('Needs a password') }, 'password')))));
+    if (!shown.length) list.append(h('p', { class: 'empty', style: 'grid-column:1/-1' }, docs.length ? t('No matching documents.') : t('No documents are listed here. Use the direct link you were given.')));
   }
-  app.append(h('h1', {}, 'Documents'), h('input', { type: 'search', placeholder: 'Search documents', oninput: e => { q = e.target.value.trim().toLowerCase(); draw(); } }), chips, list);
+  app.append(h('h1', {}, t('Documents')), h('input', { type: 'search', placeholder: t('Search documents'), oninput: e => { q = e.target.value.trim().toLowerCase(); draw(); } }), chips, list);
   draw();
 }
 
@@ -762,7 +793,7 @@ async function imageData(file, max) {
   const url = URL.createObjectURL(file);
   try {
     const im = new Image();
-    await new Promise((ok, no) => { im.onload = ok; im.onerror = () => no(new Error('That file is not a PNG or JPEG image')); im.src = url; });
+    await new Promise((ok, no) => { im.onload = ok; im.onerror = () => no(new Error(t('That file is not a PNG or JPEG image'))); im.src = url; });
     const s = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight, 1));
     const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(im.naturalWidth * s)); c.height = Math.max(1, Math.round(im.naturalHeight * s));
     c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
@@ -773,8 +804,8 @@ async function imageData(file, max) {
 function lockView() {
   const pw = h('input', { type: 'password', autocomplete: 'off', autofocus: true });
   app.replaceChildren(h('form', { class: 'panel login', onsubmit: async e => { e.preventDefault(); try { await api('POST', '/api/d/' + slug + '/unlock', { password: pw.value }); app.replaceChildren(); await formView(); } catch (err) { fail(err); pw.select(); } } },
-    h('div', { class: 'logo', innerHTML: LOGO }), h('h1', {}, 'This form is protected'), h('p', { class: 'muted small', style: 'margin:0 0 6px' }, 'Enter the password you were given to open it.'),
-    h('label', {}, 'Password'), pw, h('div', { style: 'margin-top:16px' }, h('button', { class: 'pri', style: 'width:100%' }, 'Open form'))));
+    h('div', { class: 'logo', innerHTML: LOGO }), h('h1', {}, t('This form is protected')), h('p', { class: 'muted small', style: 'margin:0 0 6px' }, t('Enter the password you were given to open it.')),
+    h('label', {}, t('Password')), pw, h('div', { style: 'margin-top:16px' }, h('button', { class: 'pri', style: 'width:100%' }, t('Open form')))));
 }
 
 async function formView() {
@@ -782,7 +813,7 @@ async function formView() {
   try { doc = await api('GET', '/api/d/' + slug); }
   catch (e) {
     if (e.status === 401) return lockView();
-    app.append(h('h1', {}, 'Document not found'), h('p', { class: 'muted' }, 'This link is not valid any more.')); return;
+    app.append(h('h1', {}, t('Document not found')), h('p', { class: 'muted' }, t('This link is not valid any more.'))); return;
   }
   document.title = doc.title; $('#homeT').textContent = doc.siteTitle;
   // values from the link: only #key=value, which never leaves the browser (a query string would reach server and proxy logs)
@@ -803,7 +834,7 @@ async function formView() {
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
   const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
-  const HINT = { browser: 'Remembered on this device for 30 days', url: 'Can be carried in a link', instance: '', today: "Today's date" };
+  const HINT = { browser: t('Remembered on this device for 30 days'), url: t('Can be carried in a link'), instance: '', today: t("Today's date") };
   const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const toIso = v => { const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(String(v).trim()); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : v; };
 
@@ -822,15 +853,15 @@ async function formView() {
     form.append(rows[f.key]);
   }
   for (const f of doc.fields) if (f.hidden && rows[f.key]) rows[f.key].style.display = 'none'; // hidden fields keep their value and are still printed
-  if (doc.fields.length && doc.fields.every(f => f.hidden)) form.append(h('p', { class: 'muted' }, 'Nothing to fill in here — just print or download.'));
-  if (!doc.fields.length) form.append(h('p', { class: 'muted' }, 'This document has no fields to fill in.'));
+  if (doc.fields.length && doc.fields.every(f => f.hidden)) form.append(h('p', { class: 'muted' }, t('Nothing to fill in here — just print or download.')));
+  if (!doc.fields.length) form.append(h('p', { class: 'muted' }, t('This document has no fields to fill in.')));
   function imageRow(f) { // file picker + thumbnail; the value is a data URL, or '' to fall back to the admin's default image
     const fixedUrl = f.prefill === 'instance' && f.value ? '/api/d/' + slug + '/image/' + f.key : '';
     const st = inputs[f.key] = { value: '' };
     const thumb = h('img', { class: 'thumb', alt: '' }), file = h('input', { type: 'file', accept: 'image/png,image/jpeg', id: 'f_' + f.key, style: 'display:none' });
-    const pick = h('button', { class: 'small', onclick: () => file.click() }), clear = h('button', { class: 'small', onclick: () => { st.set(''); changed(); } }, 'Remove');
-    const draw = f.type === 'signature' && h('button', { class: 'small', onclick: () => sigPad(v => { st.set(v); changed(); }) }, 'Draw signature');
-    const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? 'Replace image' : 'Choose image'; };
+    const pick = h('button', { class: 'small', onclick: () => file.click() }), clear = h('button', { class: 'small', onclick: () => { st.set(''); changed(); } }, t('Remove'));
+    const draw = f.type === 'signature' && h('button', { class: 'small', onclick: () => sigPad(v => { st.set(v); changed(); }) }, t('Draw signature'));
+    const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? t('Replace image') : t('Choose image'); };
     st.set = v => { st.value = v || ''; show(); };
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
     // pictures and signatures are only remembered when the user says so: shared computers must not hand them to the next person
@@ -840,9 +871,9 @@ async function formView() {
     const changed = () => { remember(); rows[f.key].classList.remove('bad'); schedule(); };
     file.addEventListener('change', async () => { const fl = file.files[0]; file.value = ''; if (!fl) return; try { st.set(await imageData(fl, 1200)); changed(); } catch (e) { fail(e); } });
     st.set(saved || '');
-    const hint = f.prefill === 'instance' && f.value ? 'A default image is provided; you can replace it' : f.prefill === 'browser' ? '' : HINT[f.prefill];
+    const hint = f.prefill === 'instance' && f.value ? t('A default image is provided; you can replace it') : f.prefill === 'browser' ? '' : HINT[f.prefill];
     return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, draw, pick, clear, file)),
-      rem && h('label', { class: 'chk small', style: 'margin-top:6px' }, rem, 'Remember on this device (30 days)'), hint && h('div', { class: 'hint' }, hint));
+      rem && h('label', { class: 'chk small', style: 'margin-top:6px' }, rem, t('Remember on this device (30 days)')), hint && h('div', { class: 'hint' }, hint));
   }
   // a drawing pad for signatures: pointer and touch, smoothed strokes, trimmed to the ink with a transparent background
   function sigPad(done) {
@@ -871,11 +902,11 @@ async function formView() {
       o.getContext('2d').drawImage(c, x0 - pad, y0 - pad, o.width, o.height, 0, 0, o.width, o.height);
       return o.toDataURL('image/png');
     };
-    const dlg = h('dialog', { class: 'sigdlg' }, h('h2', {}, 'Sign here'), c,
+    const dlg = h('dialog', { class: 'sigdlg' }, h('h2', {}, t('Sign here')), c,
       h('div', { class: 'row', style: 'margin-top:12px' },
-        h('button', { class: 'small', onclick: () => { strokes = []; redraw(); } }, 'Clear'), h('button', { class: 'small', onclick: () => { strokes.pop(); redraw(); } }, 'Undo'), h('span', { class: 'grow' }),
-        h('button', { onclick: () => dlg.close() }, 'Cancel'),
-        h('button', { class: 'pri', onclick: () => { const out = crop(); if (!out) { toast('Nothing drawn yet', true); return; } dlg.close(); done(out); } }, 'Use signature')));
+        h('button', { class: 'small', onclick: () => { strokes = []; redraw(); } }, t('Clear')), h('button', { class: 'small', onclick: () => { strokes.pop(); redraw(); } }, t('Undo')), h('span', { class: 'grow' }),
+        h('button', { onclick: () => dlg.close() }, t('Cancel')),
+        h('button', { class: 'pri', onclick: () => { const out = crop(); if (!out) { toast(t('Nothing drawn yet'), true); return; } dlg.close(); done(out); } }, t('Use signature'))));
     dlg.addEventListener('close', () => dlg.remove());
     document.body.append(dlg); dlg.showModal();
   }
@@ -897,7 +928,7 @@ async function formView() {
   function complete() {
     const miss = doc.fields.filter(f => f.required && !f.hidden && !get(f) && !(IMG(f.type) && f.prefill === 'instance' && f.value));
     miss.forEach(f => rows[f.key].classList.add('bad'));
-    if (miss.length) { toast('Please fill in: ' + miss.map(f => f.label).join(', '), true); inputs[miss[0].key].focus(); }
+    if (miss.length) { toast(t('Please fill in: ') + miss.map(f => f.label).join(', '), true); inputs[miss[0].key].focus(); }
     return !miss.length;
   }
   const fresh = async () => { clearTimeout(timer); return refresh(); };
@@ -941,7 +972,7 @@ async function formView() {
   async function serverPrint() {
     if (!complete()) return;
     const r = await api('POST', '/api/d/' + slug + '/print', { values: values(), copies: 1 });
-    toast('Sent to the printer' + (r.jobId ? ' (job ' + r.jobId + ')' : ''));
+    toast(t('Sent to the printer') + (r.jobId ? t(' (job ') + r.jobId + ')' : ''));
   }
   function shareLink() {
     const p = new URLSearchParams();
@@ -950,18 +981,18 @@ async function formView() {
   }
   function forget() {
     doc.fields.filter(f => f.prefill === 'browser').forEach(f => { store.set(f.key, ''); put(f, ''); if (inputs[f.key].rem) inputs[f.key].rem.checked = false; });
-    schedule(); toast('Saved values removed from this browser');
+    schedule(); toast(t('Saved values removed from this browser'));
   }
   const guard = fn => async e => { const b = e.currentTarget; b.disabled = true; try { await fn(); } catch (err) { fail(err); } b.disabled = false; };
   const has = mode => doc.fields.some(f => f.prefill === mode);
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
-      h('button', { class: 'pri', onclick: guard(browserPrint) }, 'Print'),
+      h('button', { class: 'pri', onclick: guard(browserPrint) }, t('Print')),
       doc.serverPrint && h('button', { onclick: guard(serverPrint) }, doc.printLabel || 'Print at home'),
-      h('button', { onclick: guard(download) }, 'Download PDF')),
+      h('button', { onclick: guard(download) }, t('Download PDF'))),
     (has('url') || has('browser')) && h('div', { class: 'row', style: 'margin-top:10px' },
-      has('url') && h('button', { class: 'small', onclick: shareLink, title: 'Copies a link that opens this form with the marked fields filled in' }, 'Copy link with values'),
-      has('browser') && h('button', { class: 'small', onclick: forget }, 'Forget saved values'))));
+      has('url') && h('button', { class: 'small', onclick: shareLink, title: t('Copies a link that opens this form with the marked fields filled in') }, t('Copy link with values')),
+      has('browser') && h('button', { class: 'small', onclick: forget }, t('Forget saved values')))));
   app.append(h('h1', {}, doc.title), doc.description && h('p', { class: 'muted', style: 'margin-top:-8px' }, doc.description), h('div', { class: 'split' }, form, pv));
   await refresh();
 }
@@ -971,9 +1002,9 @@ async function formView() {
 const ADMIN_HTML = page('Forms admin', '<header><a href="/admin" id="home">' + LOGO_SVG + '<span id="homeT">Forms admin</span></a><span class="sp"></span><span id="nav" class="row"></span></header>', String.raw`
 const app = $('#app');
 let me = null, dirty = false, lastHash = location.hash;
-const TYPES = { text: 'Text', textarea: 'Multi-line text', date: 'Date', checkbox: 'Checkbox (X)', image: 'Image (upload)', signature: 'Signature (draw or upload)', static: 'Fixed text (not editable)' };
+const TYPES = { text: t('Text'), textarea: t('Multi-line text'), date: t('Date'), checkbox: t('Checkbox (X)'), image: t('Image (upload)'), signature: t('Signature (draw or upload)'), static: t('Fixed text (not editable)') };
 const IMG = t => t === 'image' || t === 'signature';
-const PRE = { none: 'No prefill', browser: 'Remember per user (browser)', instance: 'Fixed value (this instance)', url: 'From link (URL)', today: "Today's date" };
+const PRE = { none: t('No prefill'), browser: t('Remember per user (browser)'), instance: t('Fixed value (this instance)'), url: t('From link (URL)'), today: t("Today's date") };
 const PRE_SHORT = { none: '', browser: 'browser', instance: 'fixed', url: 'link', today: 'today' };
 const preFor = type => Object.fromEntries(Object.entries(PRE).filter(([k]) => (k !== 'today' || type === 'date') && (k !== 'url' || !IMG(type))));
 const DATEFMT = ['YYYY-MM-DD', 'DD.MM.YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY']; // first entry: default for new fields (the server keeps DD.MM.YYYY for stored fields without a format)
@@ -984,14 +1015,15 @@ const setDocOpen = v => { try { localStorage.setItem('stampfill:docOpen', v ? '1
 const slugOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 async function boot() {
+  document.title = t('Forms admin'); $('#homeT').textContent = t('Forms admin');
   try { me = await api('GET', '/api/admin/me'); } catch (e) { return loginView(); }
-  $('#nav').replaceChildren(h('a', { href: '#' }, 'Documents'), h('a', { href: '#settings' }, 'Settings'), h('a', { href: '/', target: '_blank' }, 'Public list'),
-    h('button', { onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, 'Log out'));
+  $('#nav').replaceChildren(h('a', { href: '#' }, t('Documents')), h('a', { href: '#settings' }, t('Settings')), h('a', { href: '/', target: '_blank' }, t('Public list')),
+    h('button', { onclick: async () => { await api('POST', '/api/logout'); location.reload(); } }, t('Log out')));
   go();
 }
 window.addEventListener('hashchange', () => {
   if (!me) return;
-  if (dirty && !confirm('Discard unsaved changes?')) { history.replaceState(null, '', lastHash || '#'); return; }
+  if (dirty && !confirm(t('Discard unsaved changes?'))) { history.replaceState(null, '', lastHash || '#'); return; }
   go();
 });
 window.addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
@@ -1004,8 +1036,8 @@ function go() {
 function loginView() {
   const pw = h('input', { type: 'password', autocomplete: 'current-password', autofocus: true });
   app.replaceChildren(h('form', { class: 'panel login', onsubmit: async e => { e.preventDefault(); try { await api('POST', '/api/login', { password: pw.value }); boot(); } catch (err) { fail(err); pw.select(); } } },
-    h('div', { class: 'logo', innerHTML: LOGO }), h('h1', {}, 'Admin login'), h('p', { class: 'muted small', style: 'margin:0 0 6px' }, 'Manage templates, fields and printing.'),
-    h('label', {}, 'Password'), pw, h('div', { style: 'margin-top:16px' }, h('button', { class: 'pri', style: 'width:100%' }, 'Log in'))));
+    h('div', { class: 'logo', innerHTML: LOGO }), h('h1', {}, t('Admin login')), h('p', { class: 'muted small', style: 'margin:0 0 6px' }, t('Manage templates, fields and printing.')),
+    h('label', {}, t('Password')), pw, h('div', { style: 'margin-top:16px' }, h('button', { class: 'pri', style: 'width:100%' }, t('Log in')))));
 }
 
 async function listView() {
@@ -1019,15 +1051,15 @@ async function listView() {
     file.value = '';
   } });
   function draw() {
-    chips.replaceChildren(...(tags.length ? ['', ...tags] : []).map(t => h('button', { class: 'chip' + (t === tag ? ' on' : ''), onclick: () => { tag = t; draw(); } }, t || 'All')));
+    chips.replaceChildren(...(tags.length ? ['', ...tags] : []).map(x => h('button', { class: 'chip' + (x === tag ? ' on' : ''), onclick: () => { tag = x; draw(); } }, x || t('All'))));
     body.replaceChildren(...docs.filter(d => !tag || d.tags.includes(tag)).map(d => h('tr', {},
-      h('td', {}, h('a', { href: '#doc/' + d.id }, d.title)), h('td', {}, d.tags.map(t => h('span', { class: 'tag' }, t))),
-      h('td', {}, d.fields), h('td', {}, (d.listed ? 'Listed' : 'Link only') + (d.protected ? ' · password' : '')),
-      h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => copyText(linkOf(d)) }, 'Copy link'), h('a', { class: 'btn', href: '/d/' + d.slug, target: '_blank' }, 'Open'))))));
+      h('td', {}, h('a', { href: '#doc/' + d.id }, d.title)), h('td', {}, d.tags.map(x => h('span', { class: 'tag' }, x))),
+      h('td', {}, d.fields), h('td', {}, (d.listed ? t('Listed') : t('Link only')) + (d.protected ? t(' · password') : '')),
+      h('td', {}, h('div', { class: 'row' }, h('button', { onclick: () => copyText(linkOf(d)) }, t('Copy link')), h('a', { class: 'btn', href: '/d/' + d.slug, target: '_blank' }, t('Open')))))));
   }
-  app.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, 'Documents'), h('button', { class: 'pri', onclick: () => file.click() }, 'Upload PDF'), file), chips,
-    docs.length ? h('table', {}, h('thead', {}, h('tr', {}, ['Title', 'Tags', 'Fields', 'Visibility', ''].map(t => h('th', {}, t)))), body)
-      : h('p', { class: 'empty' }, 'No documents yet. Upload a PDF to create the first one.'));
+  app.append(h('div', { class: 'row' }, h('h1', { class: 'grow' }, t('Documents')), h('button', { class: 'pri', onclick: () => file.click() }, t('Upload PDF')), file), chips,
+    docs.length ? h('table', {}, h('thead', {}, h('tr', {}, [t('Title'), t('Tags'), t('Fields'), t('Visibility'), ''].map(x => h('th', {}, x)))), body)
+      : h('p', { class: 'empty' }, t('No documents yet. Upload a PDF to create the first one.')));
   draw();
 }
 
@@ -1036,43 +1068,46 @@ async function settingsView() {
   const title = h('input', { type: 'text', value: s.siteTitle }), purl = h('input', { type: 'url', value: s.printerUrl, placeholder: 'http://cups-host:631/printers/NAME' });
   const pub = h('input', { type: 'checkbox', checked: s.publicPrint }), pbtn = h('input', { type: 'text', value: s.printButton, placeholder: 'Print at home', maxLength: 40 });
   const ptest = h('div', { class: 'hint', id: 'ptest' });
+  const langSel = h('select', { id: 'defLang' }, Object.entries(LANGS).map(([k, n]) => h('option', { value: k, selected: (s.language || 'en') === k }, n)));
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nxt = h('input', { type: 'password', autocomplete: 'new-password' });
-  app.append(h('h1', {}, 'Settings'), h('div', { class: 'panel', style: 'max-width:560px' },
-    h('label', {}, 'Site title'), title,
-    h('label', {}, 'Network printer (IPP / CUPS URL, optional)'), h('div', { class: 'row' }, h('div', { class: 'grow' }, purl), h('button', { onclick: async e => {
-      const b = e.currentTarget; b.disabled = true; ptest.className = 'hint'; ptest.textContent = 'Asking the printer…';
+  app.append(h('h1', {}, t('Settings')), h('div', { class: 'panel', style: 'max-width:560px' },
+    h('label', {}, t('Site title')), title,
+    h('label', {}, t('Default language')), langSel,
+    h('div', { class: 'hint' }, t('Used when a visitor\'s browser language is not available. Everyone can switch languages in the header.')),
+    h('label', {}, t('Network printer (IPP / CUPS URL, optional)')), h('div', { class: 'row' }, h('div', { class: 'grow' }, purl), h('button', { onclick: async e => {
+      const b = e.currentTarget; b.disabled = true; ptest.className = 'hint'; ptest.textContent = t('Asking the printer…');
       try {
         const r = await api('POST', '/api/admin/printer/test', { url: purl.value });
-        ptest.replaceChildren(h('b', {}, (r.model || r.name || 'Printer') + ' — ' + r.state + (r.reasons.length ? ' (' + r.reasons.join(', ') + ')' : '')), h('br'),
-          'Accepts: ' + (r.formats.join(', ') || 'no formats reported'), h('br'),
-          r.pdf ? h('span', { style: 'color:var(--ok)' }, 'Takes PDF — ready to print.') : h('span', { style: 'color:var(--bad)' }, 'Does not take PDF. Print through a CUPS queue instead: see "Printing" in the README (docker-compose.cups.yml).'));
+        ptest.replaceChildren(h('b', {}, (r.model || r.name || t('Printer')) + ' — ' + r.state + (r.reasons.length ? ' (' + r.reasons.join(', ') + ')' : '')), h('br'),
+          t('Accepts: ') + (r.formats.join(', ') || t('no formats reported')), h('br'),
+          r.pdf ? h('span', { style: 'color:var(--ok)' }, t('Takes PDF — ready to print.')) : h('span', { style: 'color:var(--bad)' }, t('Does not take PDF. Print through a CUPS queue instead: see "Printing" in the README (docker-compose.cups.yml).')));
       } catch (err) { ptest.className = 'hint'; ptest.textContent = err.message; ptest.style.color = 'var(--bad)'; return; } finally { b.disabled = false; }
       ptest.style.color = '';
-    } }, 'Test printer')), ptest,
-    h('div', { class: 'hint' }, 'Adds a button to every form that prints on this printer from the server. The printer must accept PDF; a CUPS queue converts for printers that do not. Each document can switch the button off.'),
-    h('label', {}, 'Label of that button'), pbtn,
-    h('label', { class: 'chk', style: 'margin-top:12px' }, pub, 'Let everyone with a document link use this printer (otherwise only while logged in as admin)'),
-    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value }); toast('Saved'); } catch (e) { fail(e); } } }, 'Save settings'))),
-    h('h2', {}, 'Sessions'),
+    } }, t('Test printer'))), ptest,
+    h('div', { class: 'hint' }, t('Adds a button to every form that prints on this printer from the server. The printer must accept PDF; a CUPS queue converts for printers that do not. Each document can switch the button off.')),
+    h('label', {}, t('Label of that button')), pbtn,
+    h('label', { class: 'chk', style: 'margin-top:12px' }, pub, t('Let everyone with a document link use this printer (otherwise only while logged in as admin)')),
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value, language: langSel.value }); toast(t('Saved')); } catch (e) { fail(e); } } }, t('Save settings')))),
+    h('h2', {}, t('Sessions')),
     h('div', { class: 'panel', style: 'max-width:560px' },
-      h('p', { class: 'muted small', style: 'margin:0 0 10px' }, 'Admin sessions last 12 hours of inactivity. Signing out everywhere also closes every unlocked form in every browser.'),
-      h('button', { onclick: async () => { try { await api('POST', '/api/admin/sessions/revoke'); toast('All other sessions signed out'); } catch (e) { fail(e); } } }, 'Sign out all other sessions')),
-    h('h2', {}, 'Password'),
-    me.envPassword ? h('p', { class: 'muted' }, 'The admin password is set through the ADMIN_PASSWORD environment variable.')
-      : h('div', { class: 'panel', style: 'max-width:560px' }, h('label', {}, 'Current password'), cur, h('label', {}, 'New password (at least 8 characters)'), nxt,
-        h('div', { style: 'margin-top:14px' }, h('button', { onclick: async () => { try { await api('POST', '/api/admin/password', { current: cur.value, next: nxt.value }); cur.value = nxt.value = ''; toast('Password changed'); } catch (e) { fail(e); } } }, 'Change password'))));
+      h('p', { class: 'muted small', style: 'margin:0 0 10px' }, t('Admin sessions last 12 hours of inactivity. Signing out everywhere also closes every unlocked form in every browser.')),
+      h('button', { onclick: async () => { try { await api('POST', '/api/admin/sessions/revoke'); toast(t('All other sessions signed out')); } catch (e) { fail(e); } } }, t('Sign out all other sessions'))),
+    h('h2', {}, t('Password')),
+    me.envPassword ? h('p', { class: 'muted' }, t('The admin password is set through the ADMIN_PASSWORD environment variable.'))
+      : h('div', { class: 'panel', style: 'max-width:560px' }, h('label', {}, t('Current password')), cur, h('label', {}, t('New password (at least 8 characters)')), nxt,
+        h('div', { style: 'margin-top:14px' }, h('button', { onclick: async () => { try { await api('POST', '/api/admin/password', { current: cur.value, next: nxt.value }); cur.value = nxt.value = ''; toast(t('Password changed')); } catch (e) { fail(e); } } }, t('Change password')))));
 }
 
 async function editView(id) {
   let d = await api('GET', '/api/admin/docs/' + id);
   let sel = null, pageNo = 1, vp = null, seq = 0, timer;
-  const mark = () => { dirty = true; saveBtn.textContent = 'Save changes'; saveBtn.disabled = false; };
+  const mark = () => { dirty = true; saveBtn.textContent = t('Save changes'); saveBtn.disabled = false; };
   const field = () => d.fields.find(f => f.id === sel);
 
   // ---- stage: live PDF preview with draggable field markers
   const canvasBox = h('div'), ov = h('div', { class: 'ov' }), wrap = h('div', { class: 'wrap' }, canvasBox, ov);
   const pageLbl = h('span', { class: 'muted' });
-  const rotIn = h('input', { type: 'number', id: 'rotIn', step: 0.5, min: -180, max: 180, value: 0, title: 'Rotation of this page in degrees', style: 'width:84px' });
+  const rotIn = h('input', { type: 'number', id: 'rotIn', step: 0.5, min: -180, max: 180, value: 0, title: t('Rotation of this page in degrees'), style: 'width:84px' });
   const setRot = v => { v = Math.max(-180, Math.min(180, Math.round((+v || 0) * 10) / 10)); d.rotation[pageNo - 1] = v; rotIn.value = v; mark(); redraw().catch(fail); };
   rotIn.addEventListener('change', () => setRot(rotIn.value));
   const rotBy = step => { let v = (d.rotation[pageNo - 1] || 0) + step; if (v > 180) v -= 360; if (v < -180) v += 360; setRot(v); };
@@ -1085,7 +1120,7 @@ async function editView(id) {
     const v = await drawPage(pdf, pageNo, c, w);
     if (my !== seq) return;
     vp = v; wrap.style.width = w + 'px'; canvasBox.replaceChildren(c);
-    pageLbl.textContent = 'Page ' + pageNo + ' of ' + pdf.numPages; rotIn.value = d.rotation[pageNo - 1] || 0; markers();
+    pageLbl.textContent = t('Page ') + pageNo + t(' of ') + pdf.numPages; rotIn.value = d.rotation[pageNo - 1] || 0; markers();
   }
   const later = () => { clearTimeout(timer); timer = setTimeout(() => redraw().catch(fail), 200); };
   const aspects = {}; // default image name -> width/height, so the marker shows the printed shape
@@ -1101,10 +1136,10 @@ async function editView(id) {
       const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '0000-00-00' : (f.value || f.label).split('\n')[0];
       const w = img ? (f.maxWidth || 120) * vp.scale : (f.maxWidth > 0 ? f.maxWidth : Math.max(f.size, sample.length * f.size * 0.52)) * vp.scale;
       const hgt = img ? (f.height > 0 ? f.height * vp.scale : w / aspectOf(f)) : fh * 1.1, top = img ? pt[1] - hgt : pt[1] - fh * 0.85; // images grow upwards from (x, y)
-      const m = h('div', { class: 'mk' + (f.id === sel ? ' on' : ''), title: 'Drag to move', style: 'left:' + pt[0] + 'px;top:' + top + 'px;width:' + w + 'px;height:' + hgt + 'px' }, h('span', {}, f.label));
+      const m = h('div', { class: 'mk' + (f.id === sel ? ' on' : ''), title: t('Drag to move'), style: 'left:' + pt[0] + 'px;top:' + top + 'px;width:' + w + 'px;height:' + hgt + 'px' }, h('span', {}, f.label));
       m.addEventListener('pointerdown', e => drag(e, f, m));
       if (f.id === sel && f.type !== 'checkbox') { // resize handle: top-right for images (they grow upwards), bottom-right for text (wrap width)
-        const rz = h('div', { class: 'rz ' + (img ? 'tr' : 'br'), title: img ? 'Drag to resize' : 'Drag to set the wrap width' });
+        const rz = h('div', { class: 'rz ' + (img ? 'tr' : 'br'), title: img ? t('Drag to resize') : t('Drag to set the wrap width') });
         rz.addEventListener('pointerdown', e => resize(e, f, m)); m.append(rz);
       }
       return m;
@@ -1136,8 +1171,8 @@ async function editView(id) {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   }
   function addField(x, y) {
-    let n = d.fields.length + 1, label = 'Field ' + n;
-    while (d.fields.some(f => f.key === keyOf(label))) label = 'Field ' + (++n);
+    let n = d.fields.length + 1, label = t('Field ') + n;
+    while (d.fields.some(f => f.key === keyOf(label))) label = t('Field ') + (++n);
     const f = { id: 'f' + Math.random().toString(36).slice(2, 10), key: keyOf(label), label, type: 'text', required: false, hidden: false, page: pageNo, x: Math.round(x), y: Math.round(y), size: 11, maxWidth: 0, height: 0, dateFormat: DATEFMT[0], prefill: 'none', value: '' };
     d.fields.push(f); sel = f.id; mark(); side(); redraw().catch(fail);
     const first = $('#fp input'); if (first) { first.focus(); first.select(); }
@@ -1146,23 +1181,23 @@ async function editView(id) {
   ov.addEventListener('pointerdown', e => { if (e.target === ov && sel) { sel = null; side(); markers(); } });
 
   // ---- side panel
-  const saveBtn = h('button', { class: 'pri', disabled: true, onclick: save }, 'Saved');
+  const saveBtn = h('button', { class: 'pri', disabled: true, onclick: save }, t('Saved'));
   const title = h('input', { type: 'text', value: d.title, oninput: mark }), desc = h('textarea', { rows: 2, value: d.description, oninput: mark });
-  const tags = h('input', { type: 'text', value: d.tags.join(', '), placeholder: 'e.g. school, tax, club', oninput: mark }), listed = h('input', { type: 'checkbox', checked: d.listed, onchange: mark });
+  const tags = h('input', { type: 'text', value: d.tags.join(', '), placeholder: t('e.g. school, tax, club'), oninput: mark }), listed = h('input', { type: 'checkbox', checked: d.listed, onchange: mark });
   const link = h('input', { type: 'text', readOnly: true, value: linkOf(d), onfocus: e => e.target.select() });
   const readable = s => /^[a-z0-9-]+$/.test(s) ? s : ''; let slugInit = readable(d.slug); // random links are not shown as a name
-  const slugIn = h('input', { type: 'text', id: 'slugIn', value: slugInit, spellcheck: false, placeholder: 'empty = random link', oninput: () => { link.value = location.origin + '/d/' + (slugOf(slugIn.value) || '(random)'); mark(); } });
+  const slugIn = h('input', { type: 'text', id: 'slugIn', value: slugInit, spellcheck: false, placeholder: t('empty = random link'), oninput: () => { link.value = location.origin + '/d/' + (slugOf(slugIn.value) || '(random)'); mark(); } });
   const allowPrint = h('input', { type: 'checkbox', checked: d.serverPrint !== false, onchange: mark });
   let dropPw = false;
-  const pwIn = h('input', { type: 'text', autocomplete: 'off', spellcheck: false, placeholder: d.protected ? 'Password set — type a new one to change it' : 'No password', oninput: () => { dropPw = false; mark(); } });
-  const pwDrop = h('button', { class: 'small', style: d.protected ? '' : 'display:none', onclick: () => { dropPw = true; pwIn.value = ''; pwIn.placeholder = 'Password will be removed on save'; mark(); } }, 'Remove');
-  const openBtn = h('a', { class: 'btn', target: '_blank', href: '/d/' + d.slug }, 'Open form');
-  const afterSave = () => { link.value = linkOf(d); openBtn.href = '/d/' + d.slug; slugInit = readable(d.slug); slugIn.value = slugInit; pwIn.value = ''; dropPw = false; pwIn.placeholder = d.protected ? 'Password set — type a new one to change it' : 'No password'; pwDrop.style.display = d.protected ? '' : 'none'; };
+  const pwIn = h('input', { type: 'text', autocomplete: 'off', spellcheck: false, placeholder: d.protected ? t('Password set — type a new one to change it') : t('No password'), oninput: () => { dropPw = false; mark(); } });
+  const pwDrop = h('button', { class: 'small', style: d.protected ? '' : 'display:none', onclick: () => { dropPw = true; pwIn.value = ''; pwIn.placeholder = t('Password will be removed on save'); mark(); } }, t('Remove'));
+  const openBtn = h('a', { class: 'btn', target: '_blank', href: '/d/' + d.slug }, t('Open form'));
+  const afterSave = () => { link.value = linkOf(d); openBtn.href = '/d/' + d.slug; slugInit = readable(d.slug); slugIn.value = slugInit; pwIn.value = ''; dropPw = false; pwIn.placeholder = d.protected ? t('Password set — type a new one to change it') : t('No password'); pwDrop.style.display = d.protected ? '' : 'none'; };
   const fieldsBox = h('div'), propsBox = h('div', { id: 'fp' });
   const repl = h('input', { type: 'file', accept: 'application/pdf,.pdf', style: 'display:none', onchange: async () => {
     const f = repl.files[0]; if (!f) return;
-    if (dirty && !confirm('Replacing the PDF discards unsaved changes. Continue?')) { repl.value = ''; return; }
-    try { d = await api('PUT', '/api/admin/docs/' + id + '/pdf', f); dirty = false; saveBtn.textContent = 'Saved'; saveBtn.disabled = true; pageNo = 1; side(); await redraw(); toast('PDF replaced'); } catch (e) { fail(e); }
+    if (dirty && !confirm(t('Replacing the PDF discards unsaved changes. Continue?'))) { repl.value = ''; return; }
+    try { d = await api('PUT', '/api/admin/docs/' + id + '/pdf', f); dirty = false; saveBtn.textContent = t('Saved'); saveBtn.disabled = true; pageNo = 1; side(); await redraw(); toast(t('PDF replaced')); } catch (e) { fail(e); }
     repl.value = '';
   } });
   async function save() {
@@ -1171,13 +1206,13 @@ async function editView(id) {
       if (slugIn.value !== slugInit) body.slug = slugIn.value;
       if (dropPw) body.password = ''; else if (pwIn.value) body.password = pwIn.value;
       d = await api('PUT', '/api/admin/docs/' + id, body);
-      dirty = false; saveBtn.textContent = 'Saved'; saveBtn.disabled = true; afterSave(); side(); toast('Saved');
+      dirty = false; saveBtn.textContent = t('Saved'); saveBtn.disabled = true; afterSave(); side(); toast(t('Saved'));
     } catch (e) { fail(e); }
   }
   function flist() {
     fieldsBox.replaceChildren(d.fields.length ? h('div', { class: 'flist' }, d.fields.map(f => h('div', { class: 'fitem' + (f.id === sel ? ' on' : ''), onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); } },
-      h('b', {}, f.label), f.type === 'static' ? h('span', { class: 'tag' }, 'fixed text') : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page))))
-      : h('p', { class: 'empty small' }, 'No fields yet. Double-click on the page where the text should go, or use "Add field".'));
+      h('b', {}, f.label), f.type === 'static' ? h('span', { class: 'tag' }, t('fixed text')) : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page))))
+      : h('p', { class: 'empty small' }, t('No fields yet. Double-click on the page where the text should go, or use "Add field".')));
   }
   function side() {
     flist();
@@ -1202,52 +1237,52 @@ async function editView(id) {
       const fl = imgPick.files[0]; imgPick.value = ''; if (!fl) return;
       try { const r = await api('POST', '/api/admin/images', fl); f.value = r.name; mark(); side(); redraw().catch(fail); } catch (e) { fail(e); }
     } });
-    propsBox.replaceChildren(h('h2', {}, 'Selected field'), h('div', { class: 'panel' },
-      h('label', { style: 'margin-top:0' }, fixed ? 'Label (only shown in this editor)' : 'Label (shown on the form)'), labelIn,
-      h('div', { class: 'g2' }, h('div', {}, h('label', {}, 'Type'), sel2('type', TYPES)), h('div', {}, h('label', {}, 'Key (for links)'), keyIn)),
-      f.type === 'date' && h('div', {}, h('label', {}, 'Date format'), sel2('dateFormat', Object.fromEntries(DATEFMT.map(x => [x, x])))),
-      h('div', { class: 'g4' }, h('div', {}, h('label', {}, 'Page'), numIn('page', 1, 1)), h('div', {}, h('label', {}, 'X (pt)'), numIn('x', 0.5)), h('div', {}, h('label', {}, 'Y (pt)'), numIn('y', 0.5)), !isImg && h('div', {}, h('label', {}, 'Size'), numIn('size', 0.5, 4))),
-      isImg ? h('div', {}, h('div', { class: 'g2' }, h('div', {}, h('label', {}, 'Width (pt)'), numIn('maxWidth', 1, 5)), h('div', {}, h('label', {}, 'Height (pt, 0 = follows the image)'), numIn('height', 1, 0))),
-          h('div', { class: 'hint' }, 'Or drag the handle at the top-right corner of the marker. With a height set, the image is scaled to fit inside width × height. It grows upwards from the marked point.'))
-        : f.type !== 'checkbox' && h('div', {}, h('label', {}, 'Wrap width in pt (0 = no wrapping)'), numIn('maxWidth', 1, 0), h('div', { class: 'hint' }, 'Or drag the handle at the bottom-right corner of the marker.')),
-      fixed && h('div', {}, h('label', {}, 'Text (printed as is, users cannot change it)'), bind(h('textarea', { rows: 3, value: f.value, placeholder: 'e.g. a footer note or an office address' }), 'value', null, flist)),
-      !fixed && h('label', {}, 'Prefill'), !fixed && sel2('prefill', preFor(f.type)),
-      f.prefill === 'instance' && !isImg && h('div', {}, h('label', {}, 'Fixed value'), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: f.type === 'date' ? 'date' : 'text', value: f.value, placeholder: f.type === 'checkbox' ? '1 = ticked' : '' }), 'value')),
-      f.prefill === 'instance' && isImg && h('div', {}, h('label', {}, 'Default image (PNG or JPEG)'),
-        h('div', { class: 'imgbox' }, f.value && h('img', { class: 'thumb', alt: '', src: '/api/admin/images/' + f.value }), h('button', { class: 'small', onclick: () => imgPick.click() }, f.value ? 'Replace image' : 'Upload image'), imgPick),
-        h('div', { class: 'hint' }, 'Printed unless the user picks another image on the form. For an image nobody should replace, put it into the PDF template itself.')),
-      f.prefill === 'browser' && isImg && h('div', { class: 'hint' }, (f.type === 'signature' ? 'Users draw on screen or upload a picture; ' : 'Users pick their image once; ') + 'the browser remembers it for every document that has a field with this key.'),
-      f.prefill === 'browser' && !isImg && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
-      f.prefill === 'url' && h('div', { class: 'hint' }, 'Filled from the link, e.g. ' + linkOf(d) + '#' + f.key + '=value. Users get a "Copy link with values" button.'),
-      f.prefill === 'today' && h('div', { class: 'hint' }, 'Set to the current date when the form opens. The user can still change it.'),
-      !fixed && !f.hidden && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), 'Required'),
-      !fixed && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.hidden }), 'hidden', el => el.checked, () => { if (f.hidden) f.required = false; side(); }), 'Hide on the form (still printed)'),
-      h('div', { style: 'margin-top:12px' }, h('button', { class: 'danger', onclick: () => { d.fields = d.fields.filter(x => x !== f); sel = null; mark(); side(); redraw().catch(fail); } }, 'Remove field'))));
+    propsBox.replaceChildren(h('h2', {}, t('Selected field')), h('div', { class: 'panel' },
+      h('label', { style: 'margin-top:0' }, fixed ? t('Label (only shown in this editor)') : t('Label (shown on the form)')), labelIn,
+      h('div', { class: 'g2' }, h('div', {}, h('label', {}, t('Type')), sel2('type', TYPES)), h('div', {}, h('label', {}, t('Key (for links)')), keyIn)),
+      f.type === 'date' && h('div', {}, h('label', {}, t('Date format')), sel2('dateFormat', Object.fromEntries(DATEFMT.map(x => [x, x])))),
+      h('div', { class: 'g4' }, h('div', {}, h('label', {}, t('Page')), numIn('page', 1, 1)), h('div', {}, h('label', {}, t('X (pt)')), numIn('x', 0.5)), h('div', {}, h('label', {}, t('Y (pt)')), numIn('y', 0.5)), !isImg && h('div', {}, h('label', {}, t('Size')), numIn('size', 0.5, 4))),
+      isImg ? h('div', {}, h('div', { class: 'g2' }, h('div', {}, h('label', {}, t('Width (pt)')), numIn('maxWidth', 1, 5)), h('div', {}, h('label', {}, t('Height (pt, 0 = follows the image)')), numIn('height', 1, 0))),
+          h('div', { class: 'hint' }, t('Or drag the handle at the top-right corner of the marker. With a height set, the image is scaled to fit inside width × height. It grows upwards from the marked point.')))
+        : f.type !== 'checkbox' && h('div', {}, h('label', {}, t('Wrap width in pt (0 = no wrapping)')), numIn('maxWidth', 1, 0), h('div', { class: 'hint' }, t('Or drag the handle at the bottom-right corner of the marker.'))),
+      fixed && h('div', {}, h('label', {}, t('Text (printed as is, users cannot change it)')), bind(h('textarea', { rows: 3, value: f.value, placeholder: t('e.g. a footer note or an office address') }), 'value', null, flist)),
+      !fixed && h('label', {}, t('Prefill')), !fixed && sel2('prefill', preFor(f.type)),
+      f.prefill === 'instance' && !isImg && h('div', {}, h('label', {}, t('Fixed value')), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: f.type === 'date' ? 'date' : 'text', value: f.value, placeholder: f.type === 'checkbox' ? t('1 = ticked') : '' }), 'value')),
+      f.prefill === 'instance' && isImg && h('div', {}, h('label', {}, t('Default image (PNG or JPEG)')),
+        h('div', { class: 'imgbox' }, f.value && h('img', { class: 'thumb', alt: '', src: '/api/admin/images/' + f.value }), h('button', { class: 'small', onclick: () => imgPick.click() }, f.value ? t('Replace image') : t('Upload image')), imgPick),
+        h('div', { class: 'hint' }, t('Printed unless the user picks another image on the form. For an image nobody should replace, put it into the PDF template itself.'))),
+      f.prefill === 'browser' && isImg && h('div', { class: 'hint' }, (f.type === 'signature' ? t('Users draw on screen or upload a picture; ') : t('Users pick their image once; ')) + t('the browser remembers it for every document that has a field with this key.')),
+      f.prefill === 'browser' && !isImg && h('div', { class: 'hint' }, t('Each user types it once; their browser remembers it for every document that has a field with this key.')),
+      f.prefill === 'url' && h('div', { class: 'hint' }, t('Filled from the link, e.g. ') + linkOf(d) + '#' + f.key + t('=value. Users get a "Copy link with values" button.')),
+      f.prefill === 'today' && h('div', { class: 'hint' }, t('Set to the current date when the form opens. The user can still change it.')),
+      !fixed && !f.hidden && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), t('Required')),
+      !fixed && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.hidden }), 'hidden', el => el.checked, () => { if (f.hidden) f.required = false; side(); }), t('Hide on the form (still printed)')),
+      h('div', { style: 'margin-top:12px' }, h('button', { class: 'danger', onclick: () => { d.fields = d.fields.filter(x => x !== f); sel = null; mark(); side(); redraw().catch(fail); } }, t('Remove field')))));
   }
 
   app.append(
-    h('div', { class: 'row', style: 'margin-bottom:12px' }, h('a', { href: '#', class: 'muted' }, '← Documents'), h('span', { class: 'grow' }),
+    h('div', { class: 'row', style: 'margin-bottom:12px' }, h('a', { href: '#', class: 'muted' }, t('← Documents')), h('span', { class: 'grow' }),
       openBtn, saveBtn),
     h('div', { class: 'editor' },
       h('div', { class: 'ed-stage' }, h('div', { class: 'row', style: 'margin-bottom:8px' },
         h('button', { onclick: () => { if (pageNo > 1) { pageNo--; redraw().catch(fail); } } }, '‹'), pageLbl, h('button', { onclick: () => { if (pageNo < d.pages) { pageNo++; redraw().catch(fail); } } }, '›'),
-        h('span', { class: 'muted small', style: 'margin-left:10px' }, 'Rotate'), h('button', { class: 'small', title: 'Rotate 90° counter-clockwise', onclick: () => rotBy(-90) }, '⟲'), rotIn, h('button', { class: 'small', title: 'Rotate 90° clockwise', onclick: () => rotBy(90) }, '⟳'),
-        h('span', { class: 'grow' }), h('span', { class: 'muted small' }, 'Double-click the page to add a field · drag to move'),
-        h('button', { onclick: () => { const c = vp ? vp.convertToPdfPoint(vp.width / 2, vp.height / 3) : [72, 700]; addField(c[0], c[1]); } }, 'Add field')), stage),
-      h('details', { class: 'panel ed-doc', open: docOpen(), ontoggle: e => setDocOpen(e.target.open) }, h('summary', {}, 'Document settings'),
-          h('label', {}, 'Title'), title, h('label', {}, 'Description'), desc, h('label', {}, 'Tags (comma-separated)'), tags,
-          h('label', { class: 'chk', style: 'margin-top:12px' }, listed, 'Show in the public document list'),
-          h('label', { class: 'chk', style: 'margin-top:8px' }, allowPrint, 'Allow printing on the network printer from this form'),
-          h('label', {}, 'Link name (optional)'), slugIn,
-          h('div', { class: 'hint' }, 'Letters, digits and dashes give a readable link such as /d/library-card. Leave it empty for a random, unguessable link. Changing it breaks links already handed out.'),
-          h('label', {}, 'Direct link'), h('div', { class: 'row' }, h('div', { class: 'grow' }, link), h('button', { onclick: () => copyText(link.value) }, 'Copy')),
-          h('label', {}, 'Form password (optional)'), h('div', { class: 'row' }, h('div', { class: 'grow' }, pwIn), pwDrop),
-          h('div', { class: 'hint' }, 'Users must enter it once per browser before the form opens. Takes effect on save.'),
+        h('span', { class: 'muted small', style: 'margin-left:10px' }, t('Rotate')), h('button', { class: 'small', title: t('Rotate 90° counter-clockwise'), onclick: () => rotBy(-90) }, '⟲'), rotIn, h('button', { class: 'small', title: t('Rotate 90° clockwise'), onclick: () => rotBy(90) }, '⟳'),
+        h('span', { class: 'grow' }), h('span', { class: 'muted small' }, t('Double-click the page to add a field · drag to move')),
+        h('button', { onclick: () => { const c = vp ? vp.convertToPdfPoint(vp.width / 2, vp.height / 3) : [72, 700]; addField(c[0], c[1]); } }, t('Add field'))), stage),
+      h('details', { class: 'panel ed-doc', open: docOpen(), ontoggle: e => setDocOpen(e.target.open) }, h('summary', {}, t('Document settings')),
+          h('label', {}, t('Title')), title, h('label', {}, t('Description')), desc, h('label', {}, t('Tags (comma-separated)')), tags,
+          h('label', { class: 'chk', style: 'margin-top:12px' }, listed, t('Show in the public document list')),
+          h('label', { class: 'chk', style: 'margin-top:8px' }, allowPrint, t('Allow printing on the network printer from this form')),
+          h('label', {}, t('Link name (optional)')), slugIn,
+          h('div', { class: 'hint' }, t('Letters, digits and dashes give a readable link such as /d/library-card. Leave it empty for a random, unguessable link. Changing it breaks links already handed out.')),
+          h('label', {}, t('Direct link')), h('div', { class: 'row' }, h('div', { class: 'grow' }, link), h('button', { onclick: () => copyText(link.value) }, t('Copy'))),
+          h('label', {}, t('Form password (optional)')), h('div', { class: 'row' }, h('div', { class: 'grow' }, pwIn), pwDrop),
+          h('div', { class: 'hint' }, t('Users must enter it once per browser before the form opens. Takes effect on save.')),
           h('div', { class: 'row', style: 'margin-top:12px' },
-            h('button', { class: 'small', onclick: () => repl.click() }, 'Replace PDF'), repl,
-            h('button', { class: 'small', title: 'Replaces the link name with an unguessable random one', onclick: async () => { if (!confirm('Create a random link? The current link stops working.')) return; try { const r = await api('POST', '/api/admin/docs/' + id + '/link'); d.slug = r.slug; afterSave(); side(); toast('New link created'); } catch (e) { fail(e); } } }, 'Random link'),
-            h('button', { class: 'small danger', onclick: async () => { if (!confirm('Delete "' + d.title + '" and its PDF?')) return; try { await api('DELETE', '/api/admin/docs/' + id); dirty = false; location.hash = ''; } catch (e) { fail(e); } } }, 'Delete'))),
-      h('div', { class: 'ed-fields' }, h('h2', {}, 'Fields'), fieldsBox, propsBox)));
+            h('button', { class: 'small', onclick: () => repl.click() }, t('Replace PDF')), repl,
+            h('button', { class: 'small', title: t('Replaces the link name with an unguessable random one'), onclick: async () => { if (!confirm(t('Create a random link? The current link stops working.'))) return; try { const r = await api('POST', '/api/admin/docs/' + id + '/link'); d.slug = r.slug; afterSave(); side(); toast(t('New link created')); } catch (e) { fail(e); } } }, t('Random link')),
+            h('button', { class: 'small danger', onclick: async () => { if (!confirm(t('Delete "') + d.title + t('" and its PDF?'))) return; try { await api('DELETE', '/api/admin/docs/' + id); dirty = false; location.hash = ''; } catch (e) { fail(e); } } }, t('Delete')))),
+      h('div', { class: 'ed-fields' }, h('h2', {}, t('Fields')), fieldsBox, propsBox)));
   side(); await redraw();
   window.addEventListener('resize', later);
 }
