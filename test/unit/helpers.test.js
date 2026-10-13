@@ -83,6 +83,33 @@ test('fixed dates are stored as ISO and used for the editor preview', () => {
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
 
+// draw sizes of images in a rendered page: the "w 0 0 h x y cm" operators of its content streams
+async function drawSizes(pdfBytes) {
+  const { PDFDocument } = require('pdf-lib'), zlib = require('zlib');
+  const doc = await PDFDocument.load(pdfBytes), page = doc.getPage(0), c = page.node.Contents(), refs = c.asArray ? c.asArray() : [c];
+  let text = '';
+  for (const ref of refs) { const s = doc.context.lookup(ref); let b = Buffer.from(s.contents); try { b = zlib.inflateSync(b); } catch (e) { /* raw stream */ } text += b.toString('latin1'); }
+  return { text, sizes: [...text.matchAll(/([\d.]+) 0 0 ([\d.]+) [\d.]+ [\d.]+ cm/g)].map((m) => [+m[1], +m[2]]).filter(([w]) => w !== 1) };
+}
+
+test('image sizes: explicit width, optional height box, placeholder only in previews', async () => {
+  fs.mkdirSync(path.join(tmp, 'pdfs'), { recursive: true }); fs.copyFileSync(SAMPLE, path.join(tmp, 'pdfs', 'sz.pdf'));
+  const [fit] = app.cleanFields([{ label: 'Sig', type: 'image', x: 100, y: 100, maxWidth: 0 }], 1);
+  assert.equal(fit.maxWidth, 120, 'an image never has width 0'); assert.equal(fit.height, 0);
+  assert.equal(app.cleanFields([{ label: 'Sig', type: 'image', maxWidth: 2 }], 1)[0].maxWidth, 5, 'lower bound 5 pt');
+  const data = 'data:image/png;base64,' + PNG.toString('base64'); // a square image
+  const at = async (maxWidth, height, value = data, preview = false) => drawSizes(await app.renderPdf({ id: 'sz' }, app.cleanFields([{ label: 'Sig', type: 'image', x: 100, y: 100, maxWidth, height }], 1), { sig: value }, undefined, preview));
+  assert.deepEqual((await at(10, 0)).sizes, [[10, 10]], 'small widths render small');
+  assert.deepEqual((await at(300, 0)).sizes, [[300, 300]]);
+  assert.deepEqual((await at(80, 30)).sizes, [[30, 30]], 'fits into the height, keeps the aspect ratio');
+  assert.deepEqual((await at(20, 50)).sizes, [[20, 20]], 'the width is the limit when the box is tall');
+  const pub = await at(60, 0, '', false), prev = await at(60, 0, '', true);
+  assert.deepEqual(pub.sizes, [], 'no image: nothing printed for users');
+  const tj = (t) => (t.match(/Tj/g) || []).length; // the template itself contains text, so compare counts
+  assert.ok(tj(prev.text) > tj(pub.text) && prev.text.includes(' l\n'), 'editor preview shows a placeholder box with the label');
+  assert.equal(tj(pub.text), tj((await at(60, 0, data)).text) - 0, 'users never see the placeholder');
+});
+
 test('image fields: prefill rules, value validation, type sniffing', () => {
   assert.equal(app.cleanPrefill('image', 'url'), 'none'); assert.equal(app.cleanPrefill('image', 'browser'), 'browser');
   assert.equal(app.cleanPrefill('image', 'instance'), 'instance'); assert.equal(app.cleanPrefill('text', 'url'), 'url');

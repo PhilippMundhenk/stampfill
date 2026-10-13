@@ -26,7 +26,7 @@ test('settings and documents from 1.0.0 are kept and completed with defaults', (
   const d = app.db.docs[0];
   assert.equal(d.slug, 'AbCdEfGhIj', 'links handed out before the upgrade keep working');
   assert.equal(d.fields.length, 4);
-  for (const f of d.fields) { assert.ok(f.id); assert.ok(f.key); assert.ok(['none', 'browser', 'instance', 'url', 'today'].includes(f.prefill)); assert.equal(typeof f.hidden, 'boolean'); }
+  for (const f of d.fields) { assert.ok(f.id); assert.ok(f.key); assert.ok(['none', 'browser', 'instance', 'url', 'today'].includes(f.prefill)); assert.equal(typeof f.hidden, 'boolean'); assert.equal(f.height, 0); }
   assert.equal(d.serverPrint, true, 'server printing stays allowed for old documents'); assert.equal(d.password, null);
   assert.deepEqual(d.rotation, [0]);
   assert.equal(d.fields[2].hidden, false, 'an old fixed-value field stays visible; only new ones are hidden by default');

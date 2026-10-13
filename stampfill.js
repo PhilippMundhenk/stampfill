@@ -179,7 +179,8 @@ function cleanFields(list, pages) {
       id: typeof f.id === 'string' && /^[\w-]{4,24}$/.test(f.id) ? f.id : rid(6), key, label: str(f.label, 100) || key,
       type, hidden: type !== 'static' && !!f.hidden, required: type !== 'static' && !f.hidden && !!f.required,
       page: Math.round(num(f.page, 1, 1, pages)), x: +num(f.x, 50, -5000, 5000).toFixed(1), y: +num(f.y, 50, -5000, 5000).toFixed(1),
-      size: num(f.size, 11, 4, 72), maxWidth: num(f.maxWidth, 0, 0, 5000),
+      size: num(f.size, 11, 4, 72), maxWidth: type === 'image' ? (num(f.maxWidth, 0, 0, 5000) > 0 ? num(f.maxWidth, 0, 5, 5000) : 120) : num(f.maxWidth, 0, 0, 5000), // images: always an explicit width, at least 5 pt
+      height: num(f.height, 0, 0, 5000), // images only: 0 = follows the image, otherwise the image fits into width x height
       dateFormat, prefill, value: type === 'date' ? toIso(str(f.value, 40), dateFormat) : type === 'image' ? (IMG_NAME.test(f.value) ? f.value : '') : str(f.value, 2000),
     };
   });
@@ -215,7 +216,7 @@ function fmtDate(v, fmt) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v); if (!m) return v;
   return fmt.replace('YYYY', m[1]).replace('MM', m[2]).replace('DD', m[3]);
 }
-async function renderPdf(doc, fields, values, rotation = doc.rotation) {
+async function renderPdf(doc, fields, values, rotation = doc.rotation, preview = false) {
   const pdf = await PDFDocument.load(fs.readFileSync(pdfPath(doc.id)));
   if (rotation && rotation.some(Boolean)) await applyRotation(pdf, rotation);
   let font;
@@ -227,10 +228,20 @@ async function renderPdf(doc, fields, values, rotation = doc.rotation) {
   for (const f of fields) {
     const page = pages[f.page - 1]; if (!page) continue;
     if (f.type === 'image') {
-      const buf = imageFromValue(f, values[f.key]); if (!buf) continue;
+      const w = f.maxWidth > 0 ? f.maxWidth : 120, rot = degrees(page.getRotation().angle);
+      const buf = imageFromValue(f, values[f.key]);
+      if (!buf) { // the editor preview shows where a user-supplied image will land and how large it prints
+        if (preview) {
+          const ph = f.height > 0 ? f.height : w * 0.5;
+          page.drawRectangle({ x: f.x, y: f.y, width: w, height: ph, borderColor: rgb(0.55, 0.55, 0.6), borderWidth: 0.75, borderDashArray: [3, 3], color: rgb(0.94, 0.94, 0.96), rotate: rot });
+          page.drawText(f.label, { x: f.x + 3, y: f.y + 3, size: Math.min(8, ph * 0.6), font, color: rgb(0.45, 0.45, 0.5), rotate: rot });
+        }
+        continue;
+      }
       let img; try { img = imgType(buf) === 'png' ? await pdf.embedPng(buf) : await pdf.embedJpg(buf); } catch (e) { throw new HttpErr(400, 'The image for "' + f.label + '" could not be read'); }
-      const w = f.maxWidth > 0 ? f.maxWidth : 120;
-      page.drawImage(img, { x: f.x, y: f.y, width: w, height: w * img.height / img.width, rotate: degrees(page.getRotation().angle) });
+      let dw = w, dh = w * img.height / img.width;
+      if (f.height > 0 && dh > f.height) { dh = f.height; dw = f.height * img.width / img.height; } // fit inside width x height, keep the aspect ratio
+      page.drawImage(img, { x: f.x, y: f.y, width: dw, height: dh, rotate: rot });
       continue;
     }
     let text = f.type === 'static' ? f.value : str(values[f.key], 4000); // fixed text ignores whatever the user sent
@@ -417,7 +428,7 @@ async function route(req, res) {
     }
     if (a[2] === '/render' && m === 'POST') { // preview of unsaved field layout with sample values
       const b = await readJson(req), fields = cleanFields(b.fields, doc.pages);
-      return send(res, 200, await renderPdf(doc, fields, b.values ? cleanValues(b.values) : sampleValues(fields), b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation), 'application/pdf');
+      return send(res, 200, await renderPdf(doc, fields, b.values ? cleanValues(b.values) : sampleValues(fields), b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, true), 'application/pdf');
     }
     if (a[2] === '/link' && m === 'POST') { doc.slug = rid(10); save(); return json(res, 200, adminDoc(doc)); }
   }
@@ -525,6 +536,8 @@ tr:last-child td{border-bottom:0}tbody tr{transition:background .12s}tbody tr:ho
 .mk.on{border-style:solid;border-color:#e8590c;background:rgba(232,89,12,.14);z-index:2}
 .mk span{position:absolute;left:-1.5px;bottom:100%;font-size:10px;font-weight:600;line-height:1.3;padding:1px 5px;background:#2f6bff;color:#fff;white-space:nowrap;border-radius:3px 3px 0 0}
 .mk.on span{background:#e8590c}
+.rz{position:absolute;right:-7px;width:12px;height:12px;background:#e8590c;border:2px solid #fff;border-radius:3px;box-shadow:0 0 0 1px #e8590c;z-index:3;touch-action:none}
+.rz.br{bottom:-7px;cursor:nwse-resize}.rz.tr{top:-7px;cursor:nesw-resize}
 .flist{border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;background:var(--card)}
 .fitem{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}.fitem:hover{background:var(--bg)}
 .fitem:last-child{border-bottom:0}.fitem.on{background:var(--acc-soft);box-shadow:inset 3px 0 0 var(--acc)}.fitem b{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -876,17 +889,38 @@ async function editView(id) {
     pageLbl.textContent = 'Page ' + pageNo + ' of ' + pdf.numPages; rotIn.value = d.rotation[pageNo - 1] || 0; markers();
   }
   const later = () => { clearTimeout(timer); timer = setTimeout(() => redraw().catch(fail), 200); };
+  const aspects = {}; // default image name -> width/height, so the marker shows the printed shape
+  function aspectOf(f) {
+    if (f.type !== 'image' || !f.value) return 2;
+    if (aspects[f.value] === undefined) { aspects[f.value] = 2; const im = new Image(); im.onload = () => { aspects[f.value] = im.naturalWidth / im.naturalHeight; markers(); }; im.src = '/api/admin/images/' + f.value; }
+    return aspects[f.value];
+  }
   function markers() {
     if (!vp) return;
     ov.replaceChildren(...d.fields.filter(f => f.page === pageNo).map(f => {
       const pt = vp.convertToViewportPoint(f.x, f.y), fh = f.size * vp.scale, img = f.type === 'image';
       const sample = f.type === 'checkbox' ? 'X' : f.type === 'date' ? '0000-00-00' : (f.value || f.label).split('\n')[0];
       const w = img ? (f.maxWidth || 120) * vp.scale : (f.maxWidth > 0 ? f.maxWidth : Math.max(f.size, sample.length * f.size * 0.52)) * vp.scale;
-      const hgt = img ? w * 0.4 : fh * 1.1, top = img ? pt[1] - hgt : pt[1] - fh * 0.85; // images grow upwards from (x, y)
+      const hgt = img ? (f.height > 0 ? f.height * vp.scale : w / aspectOf(f)) : fh * 1.1, top = img ? pt[1] - hgt : pt[1] - fh * 0.85; // images grow upwards from (x, y)
       const m = h('div', { class: 'mk' + (f.id === sel ? ' on' : ''), title: 'Drag to move', style: 'left:' + pt[0] + 'px;top:' + top + 'px;width:' + w + 'px;height:' + hgt + 'px' }, h('span', {}, f.label));
       m.addEventListener('pointerdown', e => drag(e, f, m));
+      if (f.id === sel && f.type !== 'checkbox') { // resize handle: top-right for images (they grow upwards), bottom-right for text (wrap width)
+        const rz = h('div', { class: 'rz ' + (img ? 'tr' : 'br'), title: img ? 'Drag to resize' : 'Drag to set the wrap width' });
+        rz.addEventListener('pointerdown', e => resize(e, f, m)); m.append(rz);
+      }
       return m;
     }));
+  }
+  function resize(e, f, m) {
+    e.preventDefault(); e.stopPropagation();
+    const img = f.type === 'image', sx = e.clientX, sy = e.clientY, s = vp.scale;
+    const w0 = f.maxWidth > 0 ? f.maxWidth : parseFloat(m.style.width) / s, h0 = f.height > 0 ? f.height : parseFloat(m.style.height) / s, pt = vp.convertToViewportPoint(f.x, f.y);
+    const move = ev => {
+      f.maxWidth = Math.max(5, Math.round((w0 + (ev.clientX - sx) / s) * 10) / 10); m.style.width = f.maxWidth * s + 'px';
+      if (img) { f.height = Math.max(5, Math.round((h0 + (sy - ev.clientY) / s) * 10) / 10); m.style.height = f.height * s + 'px'; m.style.top = pt[1] - f.height * s + 'px'; }
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); mark(); side(); redraw().catch(fail); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   }
   function drag(e, f, m) {
     e.preventDefault(); sel = f.id; side(); markers();
@@ -905,7 +939,7 @@ async function editView(id) {
   function addField(x, y) {
     let n = d.fields.length + 1, label = 'Field ' + n;
     while (d.fields.some(f => f.key === keyOf(label))) label = 'Field ' + (++n);
-    const f = { id: 'f' + Math.random().toString(36).slice(2, 10), key: keyOf(label), label, type: 'text', required: false, page: pageNo, x: Math.round(x), y: Math.round(y), size: 11, maxWidth: 0, dateFormat: DATEFMT[0], prefill: 'none', value: '' };
+    const f = { id: 'f' + Math.random().toString(36).slice(2, 10), key: keyOf(label), label, type: 'text', required: false, hidden: false, page: pageNo, x: Math.round(x), y: Math.round(y), size: 11, maxWidth: 0, height: 0, dateFormat: DATEFMT[0], prefill: 'none', value: '' };
     d.fields.push(f); sel = f.id; mark(); side(); redraw().catch(fail);
     const first = $('#fp input'); if (first) { first.focus(); first.select(); }
   }
@@ -957,7 +991,7 @@ async function editView(id) {
     labelIn.addEventListener('input', () => { const auto = f.key === keyOf(f.label); f.label = labelIn.value; if (auto) { f.key = keyOf(f.label); keyIn.value = f.key; } mark(); later(); flist(); });
     const sel2 = (prop, opts) => { const s = h('select', {}, Object.entries(opts).map(([v, t]) => h('option', { value: v, selected: f[prop] === v }, t))); s.addEventListener('change', () => {
       const was = f[prop]; f[prop] = s.value;
-      if (prop === 'type' && (was === 'image' || s.value === 'image')) f.value = ''; // an image name and a text value are not interchangeable
+      if (prop === 'type' && (was === 'image' || s.value === 'image')) { f.value = ''; f.maxWidth = s.value === 'image' ? 120 : 0; f.height = 0; } // sizes mean different things per type
       if (f.prefill === 'today' && f.type !== 'date') f.prefill = 'none'; if (f.prefill === 'url' && f.type === 'image') f.prefill = 'none';
       if (prop === 'prefill' && (was === 'instance') !== (s.value === 'instance')) f.hidden = s.value === 'instance'; // fixed values are hidden on the form by default
       if (f.type === 'static') { f.prefill = 'none'; f.required = false; f.hidden = false; }
@@ -973,8 +1007,9 @@ async function editView(id) {
       h('div', { class: 'g2' }, h('div', {}, h('label', {}, 'Type'), sel2('type', TYPES)), h('div', {}, h('label', {}, 'Key (for links)'), keyIn)),
       f.type === 'date' && h('div', {}, h('label', {}, 'Date format'), sel2('dateFormat', Object.fromEntries(DATEFMT.map(x => [x, x])))),
       h('div', { class: 'g4' }, h('div', {}, h('label', {}, 'Page'), numIn('page', 1, 1)), h('div', {}, h('label', {}, 'X (pt)'), numIn('x', 0.5)), h('div', {}, h('label', {}, 'Y (pt)'), numIn('y', 0.5)), !isImg && h('div', {}, h('label', {}, 'Size'), numIn('size', 0.5, 4))),
-      isImg ? h('div', {}, h('label', {}, 'Width in pt (0 = 120; the height follows the image)'), numIn('maxWidth', 5, 0), h('div', { class: 'hint' }, 'The image grows upwards from the marked point. Users pick a PNG or JPEG; it is scaled down in their browser before upload.'))
-        : f.type !== 'checkbox' && h('div', {}, h('label', {}, 'Wrap width in pt (0 = no wrapping)'), numIn('maxWidth', 5, 0)),
+      isImg ? h('div', {}, h('div', { class: 'g2' }, h('div', {}, h('label', {}, 'Width (pt)'), numIn('maxWidth', 1, 5)), h('div', {}, h('label', {}, 'Height (pt, 0 = follows the image)'), numIn('height', 1, 0))),
+          h('div', { class: 'hint' }, 'Or drag the handle at the top-right corner of the marker. With a height set, the image is scaled to fit inside width × height. It grows upwards from the marked point.'))
+        : f.type !== 'checkbox' && h('div', {}, h('label', {}, 'Wrap width in pt (0 = no wrapping)'), numIn('maxWidth', 1, 0), h('div', { class: 'hint' }, 'Or drag the handle at the bottom-right corner of the marker.')),
       fixed && h('div', {}, h('label', {}, 'Text (printed as is, users cannot change it)'), bind(h('textarea', { rows: 3, value: f.value, placeholder: 'e.g. a footer note or an office address' }), 'value', null, flist)),
       !fixed && h('label', {}, 'Prefill'), !fixed && sel2('prefill', preFor(f.type)),
       f.prefill === 'instance' && !isImg && h('div', {}, h('label', {}, 'Fixed value'), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: f.type === 'date' ? 'date' : 'text', value: f.value, placeholder: f.type === 'checkbox' ? '1 = ticked' : '' }), 'value')),

@@ -29,6 +29,10 @@ All notable changes to this project are documented here. The format follows
 - gzip for pages and pdf.js assets with an in-memory cache; `modulepreload` for pdf.js.
 
 ### Fixed
+- Image fields: the width field stepped in 5 pt and treated 0 as "use 120 pt", so stepping down
+  snapped the image back to its default size. Images now always have an explicit width (1 pt
+  steps, at least 5 pt), an optional height box, a drag handle on the marker, and the editor
+  preview shows a placeholder at the printed size when the image comes from the user.
 - Instances with existing documents crashed at startup after 1.0.0 ("Cannot access 'keyOf' before
   initialization"). Stored data is now upgraded by one idempotent migration step that is tested
   against a 1.0.0 data directory.

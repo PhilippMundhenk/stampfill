@@ -125,6 +125,20 @@ test('admin places fields by double-click and configures prefill modes', async (
   await admin.locator('#fp input[type=file]').setInputFiles({ name: 'stamp.png', mimeType: 'image/png', buffer: PNG });
   await expect(admin.locator('#fp .thumb')).toBeVisible();
   await expect(admin.locator('#fp button', { hasText: 'Replace image' })).toBeVisible();
+  // images are sized by typing (1 pt steps, never below 5) or by dragging the marker's handle
+  const wIn = admin.locator('#fp input[type=number]').nth(3), hIn = admin.locator('#fp input[type=number]').nth(4);
+  await expect(wIn).toHaveValue('120'); await expect(wIn).toHaveAttribute('step', '1'); await expect(wIn).toHaveAttribute('min', '5');
+  await wIn.fill('40'); await wIn.dispatchEvent('input');
+  await expect.poll(async () => { const b = await admin.locator('.mk.on').boundingBox(); return b ? Math.round(b.width) : 0; }).toBeLessThan(70);
+  await admin.waitForLoadState('networkidle'); await admin.waitForTimeout(400); // let the debounced preview settle: redraws replace the markers
+  await admin.evaluate(() => scrollTo(0, 0)); // editing the inputs scrolled the page; the handle must be in view
+  await expect(admin.locator('.mk.on .rz')).toBeVisible();
+  let rz = null; for (let i = 0; i < 30 && !rz; i++) { rz = await admin.locator('.mk.on .rz').boundingBox().catch(() => null); if (!rz) await admin.waitForTimeout(100); }
+  if (!rz) throw new Error('no resize handle');
+  await admin.mouse.move(rz.x + 6, rz.y + 6); await admin.mouse.down(); await admin.mouse.move(rz.x + 6 + 60, rz.y + 6 - 30, { steps: 5 }); await admin.mouse.up();
+  await expect.poll(async () => Number(await wIn.inputValue())).toBeGreaterThan(40 + 60 / sc - 3);
+  expect(Number(await hIn.inputValue())).toBeGreaterThan(0); // dragging sets an explicit height box
+  await hIn.fill('0'); await hIn.dispatchEvent('input'); // back to "follows the image"
   // a throw-away field: key editing and date format, then removal
   await admin.click('text=Add field');
   await admin.locator('#fp select').nth(0).selectOption('date');
