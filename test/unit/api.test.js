@@ -26,10 +26,13 @@ before(async () => {
 });
 after(() => { app.server.close(); ipp.close(); fs.rmSync(tmp, { recursive: true, force: true }); });
 
-test('healthz answers', async () => {
+test('healthz answers, without details for strangers', async () => {
   const r = await fetch(base + '/healthz'); assert.equal(r.status, 200);
-  const j = await r.json(); assert.equal(j.ok, true); assert.equal(typeof j.version, 'string');
+  const j = await r.json(); assert.deepEqual(j, { ok: true });
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(r.headers.get('strict-transport-security'), null, 'no HSTS over plain HTTP');
+  const h = await fetch(base + '/healthz', { headers: { 'X-Forwarded-Proto': 'https' } });
+  assert.match(h.headers.get('strict-transport-security'), /max-age=31536000/, 'HSTS once the proxy reports HTTPS');
 });
 
 test('the inline page scripts parse (they live inside a string, so node --check cannot see them)', async () => {
@@ -48,7 +51,11 @@ test('pages are served with security headers', async () => {
     const r = await fetch(base + p); assert.equal(r.status, 200);
     assert.match(r.headers.get('content-type'), /text\/html/);
     assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+    assert.match(r.headers.get('content-security-policy'), /script-src 'self' 'sha256-[A-Za-z0-9+/=]+' 'wasm-unsafe-eval'/, 'inline script allowed by hash only');
+    assert.doesNotMatch(r.headers.get('content-security-policy'), /unsafe-inline'[^;]*;[^;]*style|script-src[^;]*unsafe-inline/);
   }
+  assert.match((await fetch(base + '/healthz')).headers.get('content-security-policy'), /script-src 'self' 'wasm-unsafe-eval';/, 'no inline scripts anywhere else');
+  assert.equal((await fetch(base + '/vendor/cmaps/.')).status, 404, 'directories are not files');
   assert.equal((await fetch(base + '/nope')).status, 404);
   assert.equal((await fetch(base + '/vendor/../package.json')).status, 404);
   assert.equal((await fetch(base + '/vendor/pdf.mjs')).status, 200);
@@ -86,9 +93,14 @@ test('non-GET requests need the CSRF header; admin API needs a session', async (
 
 test('login sets a cookie and unlocks the admin API', async () => {
   const r = await call('POST', '/api/login', { password: 'api-pass-123' }); assert.equal(r.status, 200);
-  const sc = r.headers.get('set-cookie'); assert.match(sc, /^sf_s=\d+\.[\w-]+; Path=\/; HttpOnly; SameSite=Strict/);
+  const sc = r.headers.get('set-cookie'); assert.match(sc, /^sf_s=\d+\.[\w-]+; Path=\/; HttpOnly; SameSite=Strict; Max-Age=43200$/);
   cookie = sc.split(';')[0];
-  const me = await (await call('GET', '/api/admin/me')).json(); assert.deepEqual(me, { ok: true, envPassword: true });
+  const meR = await call('GET', '/api/admin/me'); const me = await meR.json(); assert.deepEqual(me, { ok: true, envPassword: true });
+  assert.match(meR.headers.get('set-cookie'), /^sf_s=\d+\./, 'sessions slide on use');
+  const h = await (await fetch(base + '/healthz', { headers: { Cookie: cookie } })).json(); assert.equal(h.version, require('../../package.json').version, 'admins see the version');
+  process.env.SECURE_COOKIES = '1';
+  const sec = await call('POST', '/api/login', { password: 'api-pass-123' }); assert.match(sec.headers.get('set-cookie'), /; Secure$/, 'SECURE_COOKIES forces the flag');
+  delete process.env.SECURE_COOKIES;
   assert.equal((await call('POST', '/api/admin/password', { current: 'api-pass-123', next: 'something-else' })).status, 400);
   // tampered signature is rejected
   const bad = await fetch(base + '/api/admin/me', { headers: { Cookie: cookie.slice(0, -2) + 'xx' } }); assert.equal(bad.status, 401);
@@ -191,7 +203,7 @@ test('server print goes through IPP once a printer is configured', async () => {
 });
 
 test('a form password locks the public endpoints until unlocked', async () => {
-  assert.equal((await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: 'abc' })).status, 400, 'too short');
+  assert.equal((await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: 'abcdefg' })).status, 400, 'too short: 8 characters minimum');
   doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: 'open-sesame' })).json();
   assert.equal(doc.protected, true); assert.equal(doc.password, undefined, 'the hash never leaves the server');
   assert.equal(db().docs[0].password.includes('open-sesame'), false);
@@ -205,7 +217,8 @@ test('a form password locks the public endpoints until unlocked', async () => {
   const sec = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: { ...H, 'X-Forwarded-Proto': 'https' }, body: JSON.stringify({ password: 'open-sesame' }) });
   assert.match(sec.headers.get('set-cookie'), /; Secure$/, 'behind an HTTPS proxy the unlock cookie is Secure');
   r = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'open-sesame' }) }); assert.equal(r.status, 200);
-  const uc = r.headers.get('set-cookie'); assert.match(uc, /^sf_u_[\w-]+=[\w-]+; Path=\/; HttpOnly; SameSite=Strict; Max-Age=43200$/);
+  const uc = r.headers.get('set-cookie'); assert.match(uc, /^sf_u_[\w-]+=\d+\.[\w-]+; Path=\/; HttpOnly; SameSite=Strict; Max-Age=43200$/, 'unlock tokens carry their expiry');
+  assert.equal((await fetch(base + '/api/d/' + doc.slug, { headers: { Cookie: uc.split(';')[0].replace(/=\d+\./, '=1.') } })).status, 401, 'an expired unlock token is refused');
   const ucookie = uc.split(';')[0];
   assert.equal((await fetch(base + '/api/d/' + doc.slug, { headers: { Cookie: ucookie } })).status, 200);
   assert.equal((await fetch(base + '/api/d/' + doc.slug + '/render', { method: 'POST', headers: { ...H, Cookie: ucookie }, body: JSON.stringify({ values: {} }) })).status, 200);
@@ -214,6 +227,14 @@ test('a form password locks the public endpoints until unlocked', async () => {
   assert.equal((await fetch(base + '/api/d/' + doc.slug, { headers: { Cookie: ucookie } })).status, 401);
   doc = await (await call('PUT', '/api/admin/docs/' + doc.id, { ...doc, password: '' })).json(); assert.equal(doc.protected, false);
   assert.equal((await fetch(base + '/api/d/' + doc.slug)).status, 200);
+});
+
+test('"sign out everywhere" rotates the secret: old sessions and unlock cookies die', async () => {
+  const old = cookie;
+  const r = await call('POST', '/api/admin/sessions/revoke'); assert.equal(r.status, 200);
+  cookie = r.headers.get('set-cookie').split(';')[0];
+  assert.equal((await fetch(base + '/api/admin/me', { headers: { Cookie: old } })).status, 401);
+  assert.equal((await call('GET', '/api/admin/me')).status, 200);
 });
 
 test('new link invalidates the old one; delete removes the PDF', async () => {
@@ -242,7 +263,7 @@ test('the printer can be probed before saving its URL', async () => {
     assert.equal(d2.pdf, false); assert.deepEqual(d2.formats, ['image/urf', 'image/pwg-raster']);
     await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: rasterUrl, publicPrint: true });
     const tmpDoc = await (await call('POST', '/api/admin/docs?title=raster-test', SAMPLE)).json(); // the main document is gone by now
-    r = await fetch(base + '/api/d/' + tmpDoc.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });
+    r = await call('POST', '/api/d/' + tmpDoc.slug + '/print', { values: {} }); // as admin: the detailed reason
     assert.equal(r.status, 502); assert.match((await r.json()).error, /0x040a: document format not supported .* CUPS/);
     await call('DELETE', '/api/admin/docs/' + tmpDoc.id);
   } finally { raster.closeAllConnections(); raster.close(); }
@@ -250,22 +271,56 @@ test('the printer can be probed before saving its URL', async () => {
   assert.equal(app.ippStatusText(0x0999), 'IPP 0x0999');
 });
 
-test('printer failures are reported, not swallowed', async () => {
+test('printer failures are reported to admins and hidden from strangers', async () => {
   await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: ippUrl, publicPrint: true });
-  const expect = { 'http-error': [502, /HTTP 500/], 'short-answer': [502, /HTTP 200/], 'reject-me': [502, /rejected .*0x040a: document format not supported/], 'no-job-id': [200, null] };
+  const expect = { 'http-error': [502, /HTTP 500/], 'short-answer': [502, /HTTP 200/], 'reject-me': [502, /rejected .*0x040a: document format not supported/], 'no-job-id': [200, null],
+    redirect: [502, /not reachable/], huge: [502, /too large/] };
+  let n = 0;
   for (const [title, [status, msg]] of Object.entries(expect)) {
     const d = await (await call('POST', '/api/admin/docs?title=' + title, SAMPLE)).json();
-    const r = await fetch(base + '/api/d/' + d.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });
+    const r = await call('POST', '/api/d/' + d.slug + '/print', { values: {} }); // as admin: full detail
     assert.equal(r.status, status, title);
     const j = await r.json(); if (msg) assert.match(j.error, msg); else assert.deepEqual(j, { ok: true, jobId: null });
+    if (status === 502) { // anonymous: no addresses, no protocol details (each from its own address, the print limit is 10/min)
+      const a = await fetch(base + '/api/d/' + d.slug + '/print', { method: 'POST', headers: { ...H, 'X-Forwarded-For': '192.0.2.' + ++n }, body: JSON.stringify({ values: {} }) });
+      assert.equal(a.status, 502); assert.equal((await a.json()).error, 'The printer did not accept the job. Please try again later or ask the office.');
+    }
     await call('DELETE', '/api/admin/docs/' + d.id);
   }
+});
+
+test('public printing is limited: 5 copies, 10 jobs per minute per client', async () => {
+  const d = await (await call('POST', '/api/admin/docs?title=limits', SAMPLE)).json();
+  const xff = { 'X-Forwarded-For': '198.51.100.7' };
+  let r = await fetch(base + '/api/d/' + d.slug + '/print', { method: 'POST', headers: { ...H, ...xff }, body: JSON.stringify({ values: {}, copies: 20 }) });
+  assert.equal(r.status, 200); assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 'ipp', 'job.json'), 'utf8')).attrs.copies, 5, 'copies capped for anonymous users');
+  let last = 200;
+  for (let i = 0; i < 10 && last === 200; i++) last = (await fetch(base + '/api/d/' + d.slug + '/print', { method: 'POST', headers: { ...H, ...xff }, body: JSON.stringify({ values: {} }) })).status;
+  assert.equal(last, 429);
+  assert.equal((await call('POST', '/api/d/' + d.slug + '/print', { values: {}, copies: 20 })).status, 200, 'admins are not limited');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(tmp, 'ipp', 'job.json'), 'utf8')).attrs.copies, 20);
+  await call('DELETE', '/api/admin/docs/' + d.id);
+});
+
+test('a server-wide brake stops password guessing even from many addresses', async () => {
+  const now = Date.now(); for (let i = 0; i < 50; i++) app.authFails.push(now);
+  const r = await call('POST', '/api/login', { password: 'api-pass-123' }, { 'X-Forwarded-For': '203.0.113.' + Math.floor(Math.random() * 200) });
+  assert.equal(r.status, 429); assert.match((await r.json()).error, /on this server/);
+  app.authFails.length = 0;
+  assert.equal((await call('POST', '/api/login', { password: 'api-pass-123' })).status, 200);
+});
+
+test('the audit log records admin actions and print jobs without form values', async () => {
+  const log = fs.readFileSync(path.join(app.DATA, 'audit.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  for (const ev of ['login.ok', 'login.fail', 'settings.update', 'doc.create', 'doc.delete', 'print', 'print.fail', 'sessions.revoke', 'doc.password.set']) assert.ok(log.some((e) => e.event === ev), ev + ' is logged');
+  assert.ok(!JSON.stringify(log).includes('Jane'), 'no form values');
+  assert.ok(log.every((e) => e.t && e.ip));
 });
 
 test('logout clears the session; repeated failures are rate limited per client IP', async () => {
   const r = await call('POST', '/api/logout'); assert.match(r.headers.get('set-cookie'), /Max-Age=0/);
   cookie = ''; assert.equal((await call('GET', '/api/admin/me')).status, 401);
-  const xff = { 'X-Forwarded-For': '203.0.113.9, 10.0.0.1' }; // TRUST_PROXY=1: the first hop is the client
+  const xff = { 'X-Forwarded-For': '203.0.113.9, 10.0.0.1' }; // TRUST_PROXY=1: the last entry is what the trusted proxy appended, i.e. the client
   let last;
   for (let i = 0; i < 6; i++) last = (await call('POST', '/api/login', { password: 'wrong' }, xff)).status;
   assert.equal(last, 429);

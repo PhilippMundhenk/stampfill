@@ -39,11 +39,18 @@ const DBF = path.join(DATA, 'db.json');
 const FONT = path.join(DATA, 'font.ttf');
 const MAX_PDF = (+process.env.MAX_PDF_MB || 25) * 1024 * 1024;
 const PDFJS = path.dirname(require.resolve('pdfjs-dist/package.json'));
-const SESSION_MS = 7 * 24 * 3600 * 1000;
+const SESSION_MS = 12 * 3600 * 1000; // admin sessions: 12 h, renewed on use
+const UNLOCK_MS = 12 * 3600 * 1000; // document unlocks
+const readSecretFile = (p) => { try { return fs.readFileSync(p, 'utf8').trim(); } catch (e) { console.error('stampfill: cannot read ' + p + ' (' + e.code + ')'); process.exit(1); } };
+const ADMIN_PW = process.env.ADMIN_PASSWORD_FILE ? readSecretFile(process.env.ADMIN_PASSWORD_FILE) : process.env.ADMIN_PASSWORD || '';
 const VERSION = require('./package.json').version;
 
 // ---------------------------------------------------------------- storage
-try { fs.mkdirSync(PDFS, { recursive: true }); fs.mkdirSync(IMAGES, { recursive: true }); fs.accessSync(DATA, fs.constants.W_OK); fs.accessSync(PDFS, fs.constants.W_OK); }
+try {
+  fs.mkdirSync(PDFS, { recursive: true, mode: 0o700 }); fs.mkdirSync(IMAGES, { recursive: true, mode: 0o700 });
+  fs.accessSync(DATA, fs.constants.W_OK); fs.accessSync(PDFS, fs.constants.W_OK);
+  for (const p of [DATA, PDFS, IMAGES]) { try { fs.chmodSync(p, 0o700); } catch (e) { /* not supported here */ } } // the data directory holds secrets and personal templates
+}
 catch (e) {
   const who = process.getuid ? 'uid ' + process.getuid() + ' / gid ' + process.getgid() : 'this user';
   console.error('stampfill: the data directory ' + DATA + ' is not writable by ' + who + ' (' + e.code + ').\n' +
@@ -55,18 +62,24 @@ const rid = (n = 9) => crypto.randomBytes(n).toString('base64url');
 const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home' };
 let db = { secret: rid(32), auth: null, settings: { ...DEFAULTS }, docs: [] };
 if (fs.existsSync(DBF)) { const l = JSON.parse(fs.readFileSync(DBF, 'utf8')); db = Object.assign(db, l, { settings: { ...DEFAULTS, ...(l.settings || {}) } }); }
-const save = () => { fs.writeFileSync(DBF + '.tmp', JSON.stringify(db, null, 1)); fs.renameSync(DBF + '.tmp', DBF); };
+const save = () => { fs.writeFileSync(DBF + '.tmp', JSON.stringify(db, null, 1), { mode: 0o600 }); fs.renameSync(DBF + '.tmp', DBF); };
+const AUDIT = path.join(DATA, 'audit.log'); // append-only record of admin actions and print jobs; never contains form values
+function audit(req, event, detail) {
+  try { fs.appendFileSync(AUDIT, JSON.stringify({ t: new Date().toISOString(), ip: req ? clientIp(req) : null, event, ...detail }) + '\n', { mode: 0o600 }); } catch (e) { console.error('audit log: ' + e.message); }
+}
 const pdfPath = (id) => path.join(PDFS, id + '.pdf');
 
 // ---------------------------------------------------------------- auth
 const hashPw = (pw, salt = rid(16)) => salt + ':' + crypto.scryptSync(pw, salt, 32).toString('hex');
+const hashPwAsync = (pw, salt = rid(16)) => new Promise((ok, no) => crypto.scrypt(pw, salt, 32, (e, k) => (e ? no(e) : ok(salt + ':' + k.toString('hex')))));
 const sameStr = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
-function checkPw(pw) {
+const ENV_AUTH = ADMIN_PW ? hashPw(ADMIN_PW) : null; // hashed once at startup, never re-derived per attempt
+async function checkPw(pw) { // off the event loop: scrypt runs in the thread pool
   if (typeof pw !== 'string') return false;
-  if (process.env.ADMIN_PASSWORD) return sameStr(hashPw(pw, 'env'), hashPw(process.env.ADMIN_PASSWORD, 'env'));
-  return !!db.auth && sameStr(hashPw(pw, db.auth.split(':')[0]), db.auth);
+  const stored = ENV_AUTH || db.auth; if (!stored) return false;
+  return sameStr(await hashPwAsync(pw, stored.split(':')[0]), stored);
 }
-if (!process.env.ADMIN_PASSWORD && !db.auth) {
+if (!ADMIN_PW && !db.auth) {
   const pw = rid(12); db.auth = hashPw(pw);
   console.log('\n  Generated admin password: ' + pw + '\n  (change it under /admin > Settings)\n');
 }
@@ -77,14 +90,24 @@ function isAdmin(req) {
   const m = /(?:^|;\s*)sf_s=(\d+)\.([\w-]+)/.exec(req.headers.cookie || '');
   return !!m && +m[1] > Date.now() && sameStr(m[2], sign(m[1]));
 }
-const cookie = (req, val, maxAge) => 'sf_s=' + val + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + maxAge +
-  (req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '');
+const secure = (req) => process.env.SECURE_COOKIES === '1' || req.headers['x-forwarded-proto'] === 'https';
+const cookie = (req, val, maxAge) => 'sf_s=' + val + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + maxAge + (secure(req) ? '; Secure' : '');
 const cookies = (req) => Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((c) => c.length === 2));
 // per-form password: the unlock cookie is bound to the document and its current password hash
-const docSign = (doc) => crypto.createHmac('sha256', db.secret).update('doc.' + doc.id + '.' + doc.password).digest('base64url');
-const hasAccess = (doc, req) => !doc.password || isAdmin(req) || sameStr(cookies(req)['sf_u_' + doc.id] || '', docSign(doc));
-function checkFails(req) { const f = fails.get(clientIp(req)); if (f && f.until > Date.now()) throw new HttpErr(429, 'Too many attempts — try again in a few minutes'); }
+const docSign = (doc, exp) => crypto.createHmac('sha256', db.secret).update('doc.' + doc.id + '.' + doc.password + '.' + exp).digest('base64url');
+function hasAccess(doc, req) {
+  if (!doc.password || isAdmin(req)) return true;
+  const m = /^(\d+)\.([\w-]+)$/.exec(cookies(req)['sf_u_' + doc.id] || '');
+  return !!m && +m[1] > Date.now() && sameStr(m[2], docSign(doc, m[1]));
+}
+const authFails = []; // timestamps of failed login/unlock attempts from every client: a server-wide brake that address spoofing cannot bypass
+function checkFails(req) {
+  const now = Date.now(); while (authFails.length && authFails[0] < now - 5 * 60000) authFails.shift();
+  if (authFails.length >= 50) throw new HttpErr(429, 'Too many failed attempts on this server — try again in a few minutes');
+  const f = fails.get(clientIp(req)); if (f && f.until > now) throw new HttpErr(429, 'Too many attempts — try again in a few minutes');
+}
 async function noteFail(req) {
+  authFails.push(Date.now());
   pruneFails(); const ip = clientIp(req), f = fails.get(ip), n = (f ? f.n : 0) + 1;
   fails.set(ip, { n, until: n >= 5 ? Date.now() + 5 * 60000 : 0, at: Date.now() });
   await new Promise((r) => setTimeout(r, 400));
@@ -95,15 +118,31 @@ function pruneFails() { // keep the map bounded: drop entries whose block expire
   const cut = Date.now() - 5 * 60000;
   for (const [ip, f] of fails) if (f.until < Date.now() && f.at < cut) fails.delete(ip);
 }
-const clientIp = (req) => (process.env.TRUST_PROXY && (req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
+// behind one trusted proxy the client is the LAST X-Forwarded-For entry: that is the one the proxy appended; earlier ones are whatever the client sent
+const clientIp = (req) => (process.env.TRUST_PROXY === '1' && (req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress;
+const buckets = new Map(); // "what:ip" -> { n, reset }: simple fixed-window limits for the public endpoints
+function rateLimit(req, what, max, windowMs = 60000) {
+  const key = what + ':' + clientIp(req), now = Date.now(); let b = buckets.get(key);
+  if (!b || b.reset < now) { if (buckets.size > 5000) for (const [k, v] of buckets) if (v.reset < now) buckets.delete(k); b = { n: 0, reset: now + windowMs }; buckets.set(key, b); }
+  if (++b.n > max) throw new HttpErr(429, 'Too many requests — please slow down a little');
+}
+const render = { n: 0, q: [] }; // at most a few renders at once; a short queue, then 503
+async function withRender(fn) {
+  if (render.n >= 4) { if (render.q.length >= 16) throw new HttpErr(503, 'The server is busy — please try again in a moment'); await new Promise((ok) => render.q.push(ok)); }
+  render.n++;
+  try { return await fn(); } finally { render.n--; const next = render.q.shift(); if (next) next(); }
+}
 
 // ---------------------------------------------------------------- helpers
 class HttpErr extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const SEC = {
   'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy': "default-src 'self'; connect-src 'self' blob:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self' blob:; frame-src blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': csp("'self' 'wasm-unsafe-eval'"),
 };
+function csp(scriptSrc) { // pages add the hash of their inline script; nothing else may run inline
+  return "default-src 'self'; connect-src 'self' blob:; script-src " + scriptSrc + "; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob:; font-src 'self' data: blob:; worker-src 'self' blob:; frame-src blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+}
 function send(res, status, body, type, extra) {
   res.writeHead(status, Object.assign({ 'Content-Type': type, 'Cache-Control': 'no-store' }, SEC, extra)); res.end(body);
 }
@@ -143,8 +182,25 @@ function cleanPrefill(type, p) {
 }
 const IMG_NAME = /^[\w-]+\.(png|jpg)$/;
 const imgType = (b) => b.length > 4 && b[0] === 0x89 && b[1] === 0x50 ? 'png' : b.length > 3 && b[0] === 0xff && b[1] === 0xd8 ? 'jpg' : null;
+function imgDims(b) { // [width, height] from the PNG IHDR or the first JPEG SOF marker, without decoding anything
+  if (imgType(b) === 'png') return b.length >= 24 ? [b.readUInt32BE(16), b.readUInt32BE(20)] : null;
+  let o = 2;
+  while (o + 9 < b.length) {
+    if (b[o] !== 0xff) return null;
+    const mk = b[o + 1], len = b.readUInt16BE(o + 2);
+    if (mk >= 0xc0 && mk <= 0xcf && mk !== 0xc4 && mk !== 0xc8 && mk !== 0xcc) return [b.readUInt16BE(o + 7), b.readUInt16BE(o + 5)];
+    o += 2 + len;
+  }
+  return null;
+}
+const MAX_PIXELS = 16e6;
+function checkImage(b) { // a decompression bomb declares huge dimensions in a tiny file; refuse before pdf-lib inflates it
+  const d = imgDims(b);
+  if (!d || !d[0] || !d[1] || d[0] > 20000 || d[1] > 20000 || d[0] * d[1] > MAX_PIXELS) throw new HttpErr(400, 'Image unreadable or too large (at most 16 megapixels)');
+  return b;
+}
 function imageFromValue(f, v) { // the image sent with the form wins, else the admin's default image
-  if (typeof v === 'string' && v.startsWith('data:image/')) { const b = Buffer.from(v.slice(v.indexOf(',') + 1), 'base64'); if (imgType(b)) return b; }
+  if (typeof v === 'string' && v.startsWith('data:image/')) { const b = Buffer.from(v.slice(v.indexOf(',') + 1), 'base64'); if (imgType(b)) return checkImage(b); }
   if (f.prefill === 'instance' && f.value && fs.existsSync(path.join(IMAGES, f.value))) return fs.readFileSync(path.join(IMAGES, f.value));
   return null;
 }
@@ -169,7 +225,7 @@ const slugOf = (s) => str(s, 80).toLowerCase().normalize('NFKD').replace(/\p{M}+
 const keyOf = (s) => str(s, 60).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 function cleanFields(list, pages) {
   const seen = new Set();
-  return (Array.isArray(list) ? list : []).slice(0, 200).map((f) => {
+  return (Array.isArray(list) ? list : []).filter((f) => f && typeof f === 'object').slice(0, 200).map((f) => {
     let key = keyOf(f.key || f.label), base = key, i = 2;
     while (seen.has(key)) key = base + '_' + i++;
     seen.add(key);
@@ -218,7 +274,7 @@ function fmtDate(v, fmt) {
   return fmt.replace('YYYY', m[1]).replace('MM', m[2]).replace('DD', m[3]);
 }
 async function renderPdf(doc, fields, values, rotation = doc.rotation, preview = false) {
-  const pdf = await PDFDocument.load(fs.readFileSync(pdfPath(doc.id)));
+  const pdf = await PDFDocument.load(readTemplate(doc.id));
   if (rotation && rotation.some(Boolean)) await applyRotation(pdf, rotation);
   let font;
   if (fontkit && fs.existsSync(FONT)) { pdf.registerFontkit(fontkit); font = await pdf.embedFont(fs.readFileSync(FONT), { subset: true }); }
@@ -230,7 +286,7 @@ async function renderPdf(doc, fields, values, rotation = doc.rotation, preview =
     const page = pages[f.page - 1]; if (!page) continue;
     if (IMG(f.type)) {
       const w = f.maxWidth > 0 ? f.maxWidth : 120, rot = degrees(page.getRotation().angle);
-      const buf = imageFromValue(f, values[f.key]);
+      const buf = imageFromValue(f, f.hidden && f.prefill === 'instance' ? '' : values[f.key]); // a hidden fixed image cannot be swapped by the request
       if (!buf) { // the editor preview shows where a user-supplied image will land and how large it prints
         if (preview) {
           const ph = f.height > 0 ? f.height : w * 0.5;
@@ -245,7 +301,7 @@ async function renderPdf(doc, fields, values, rotation = doc.rotation, preview =
       page.drawImage(img, { x: f.x, y: f.y, width: dw, height: dh, rotate: rot });
       continue;
     }
-    let text = f.type === 'static' ? f.value : str(values[f.key], 4000); // fixed text ignores whatever the user sent
+    let text = f.type === 'static' || (f.hidden && f.prefill === 'instance') ? f.value : str(values[f.key], 4000); // fixed text and hidden fixed values ignore whatever the request sent
     if (f.type === 'checkbox') text = text && text !== '0' && text !== 'false' ? 'X' : '';
     else if (f.type === 'date') text = fmtDate(toIso(text, f.dateFormat), f.dateFormat);
     else if (f.type !== 'textarea' && f.type !== 'static') text = text.replace(/\s+/g, ' ');
@@ -261,9 +317,12 @@ async function renderPdf(doc, fields, values, rotation = doc.rotation, preview =
 const sampleValues = (fields) => Object.fromEntries(fields.map((f) =>
   [f.key, f.type === 'checkbox' ? '1' : f.type === 'date' ? (f.prefill === 'instance' && f.value) || new Date().toISOString().slice(0, 10) : f.value || (f.type === 'static' ? '' : f.label)]));
 function cleanValues(v) {
-  const out = {}; if (v && typeof v === 'object') for (const k of Object.keys(v).slice(0, 300)) out[k] = typeof v[k] === 'string' && v[k].startsWith('data:image/') ? v[k].slice(0, 6e6) : str(v[k], 4000);
+  const out = Object.create(null); // no prototype: a field key such as "constructor" must not find anything
+  if (v && typeof v === 'object') for (const k of Object.keys(v).slice(0, 300)) out[k] = typeof v[k] === 'string' && v[k].startsWith('data:image/') ? v[k].slice(0, 3e6) : str(v[k], 4000);
   return out;
 }
+const pdfCache = new Map(); // template bytes by document id; invalidated on upload, replace and delete
+function readTemplate(id) { let b = pdfCache.get(id); if (!b) { b = fs.readFileSync(pdfPath(id)); pdfCache.set(id, b); } return b; }
 
 // ---------------------------------------------------------------- printing (IPP, RFC 8011)
 // A tiny IPP client: Print-Job for documents, Get-Printer-Attributes to diagnose a printer. Printers that
@@ -304,11 +363,12 @@ async function ippSend(url, op, opAttrs, jobAttrs, doc) {
     ippAttr(0x47, 'attributes-charset', 'utf-8'), ippAttr(0x48, 'attributes-natural-language', 'en'), ippAttr(0x45, 'printer-uri', url.replace(/^http/, 'ipp')),
     ...opAttrs, ...(jobAttrs.length ? [Buffer.from([0x02]), ...jobAttrs] : []), Buffer.from([0x03]), doc || Buffer.alloc(0),
   ]);
-  let r, b;
-  try {
-    r = await fetch(url.replace(/^ipp/, 'http'), { method: 'POST', headers: { 'Content-Type': 'application/ipp' }, body, signal: AbortSignal.timeout(20000) });
-    b = Buffer.from(await r.arrayBuffer());
-  } catch (e) { throw new HttpErr(502, 'Printer not reachable at ' + url.replace(/^ipp/, 'http') + ' — check the address and that port 631 is open'); }
+  let r;
+  try { r = await fetch(url.replace(/^ipp/, 'http'), { method: 'POST', headers: { 'Content-Type': 'application/ipp' }, body, redirect: 'error', signal: AbortSignal.timeout(20000) }); }
+  catch (e) { throw new HttpErr(502, 'Printer not reachable at ' + url.replace(/^ipp/, 'http') + ' — check the address and that port 631 is open'); }
+  const chunks = []; let n = 0; // an IPP answer is a few hundred bytes; never buffer whatever a wrong endpoint sends
+  if (r.body) for await (const c of r.body) { n += c.length; if (n > 1024 * 1024) throw new HttpErr(502, 'Printer answer too large — is this really an IPP endpoint?'); chunks.push(c); }
+  const b = Buffer.concat(chunks);
   if (!r.ok || b.length < 8) throw new HttpErr(502, 'Printer answered HTTP ' + r.status + ' instead of IPP — is this the IPP endpoint (e.g. ipp://printer:631/ipp/print or http://cups:631/printers/NAME)?');
   return ippParse(b);
 }
@@ -339,7 +399,7 @@ function vendor(req, res, name) {
   else if (name === 'pdf.worker.mjs') file = 'legacy/build/pdf.worker.min.mjs';
   else if (/^(standard_fonts|cmaps|wasm|iccs)\/[\w.-]+$/.test(name) && !name.includes('..')) file = name;
   const full = file && path.join(PDFJS, file);
-  if (!full || !fs.existsSync(full)) return send(res, 404, 'Not found', 'text/plain');
+  if (!full || !fs.existsSync(full) || !fs.statSync(full).isFile()) return send(res, 404, 'Not found', 'text/plain');
   sendStatic(req, res, full, fs.readFileSync(full), MIME[path.extname(full)] || 'application/octet-stream', { 'Cache-Control': 'public, max-age=604800, immutable' });
 }
 
@@ -347,10 +407,11 @@ function vendor(req, res, name) {
 async function route(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname, m = req.method;
   let a;
+  if (secure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   if (m === 'GET') {
-    if (p === '/' || /^\/d\/[\w-]+$/.test(p)) return sendStatic(req, res, 'public', PUBLIC_HTML, 'text/html; charset=utf-8');
-    if (p === '/admin' || p === '/admin/') return sendStatic(req, res, 'admin', ADMIN_HTML, 'text/html; charset=utf-8');
-    if (p === '/healthz') return json(res, 200, { ok: true, version: VERSION, docs: db.docs.length });
+    if (p === '/' || /^\/d\/[\w-]+$/.test(p)) return sendStatic(req, res, 'public', PUBLIC_HTML.html, 'text/html; charset=utf-8', { 'Content-Security-Policy': PUBLIC_HTML.csp });
+    if (p === '/admin' || p === '/admin/') return sendStatic(req, res, 'admin', ADMIN_HTML.html, 'text/html; charset=utf-8', { 'Content-Security-Policy': ADMIN_HTML.csp });
+    if (p === '/healthz') return json(res, 200, isAdmin(req) ? { ok: true, version: VERSION, docs: db.docs.length } : { ok: true });
     if (p.startsWith('/vendor/')) return vendor(req, res, p.slice(8));
   } else if (req.headers['x-requested-with'] !== 'stampfill') throw new HttpErr(403, 'Forbidden'); // CSRF guard
 
@@ -366,30 +427,40 @@ async function route(req, res) {
   if ((a = /^\/api\/d\/([\w-]+)(\/render|\/print|\/unlock)?$/.exec(p))) {
     const doc = db.docs.find((d) => d.slug === a[1]); if (!doc) throw new HttpErr(404, 'Document not found');
     if (a[2] === '/unlock' && m === 'POST') {
-      checkFails(req);
+      rateLimit(req, 'auth', 20); checkFails(req);
       const body = await readJson(req, 1e4);
-      if (!doc.password || typeof body.password !== 'string' || !sameStr(hashPw(body.password, doc.password.split(':')[0]), doc.password)) { await noteFail(req); throw new HttpErr(401, 'Wrong password'); }
+      if (!doc.password || typeof body.password !== 'string' || !sameStr(await hashPwAsync(body.password, doc.password.split(':')[0]), doc.password)) { await noteFail(req); audit(req, 'unlock.fail', { doc: doc.id }); throw new HttpErr(401, 'Wrong password'); }
       fails.delete(clientIp(req));
-      return json(res, 200, { ok: true }, { 'Set-Cookie': 'sf_u_' + doc.id + '=' + docSign(doc) + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200' + (req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '') });
+      const exp = Date.now() + UNLOCK_MS;
+      return json(res, 200, { ok: true }, { 'Set-Cookie': 'sf_u_' + doc.id + '=' + exp + '.' + docSign(doc, exp) + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + UNLOCK_MS / 1000 + (secure(req) ? '; Secure' : '') });
     }
     if (!hasAccess(doc, req)) throw new HttpErr(401, 'Password required');
     if (m === 'GET' && !a[2]) return json(res, 200, publicDoc(doc, req));
     if (m === 'POST' && a[2]) {
-      const body = await readJson(req, 8e6), values = cleanValues(body.values); // images travel as data URLs
-      const pdf = await renderPdf(doc, doc.fields, values);
+      const admin = isAdmin(req);
+      if (!admin) rateLimit(req, a[2] === '/print' ? 'print' : 'render', a[2] === '/print' ? 10 : 120);
+      const body = await readJson(req, 4e6), values = cleanValues(body.values); // images travel as data URLs
+      const pdf = await withRender(() => renderPdf(doc, doc.fields, values));
       if (a[2] === '/render') return send(res, 200, pdf, 'application/pdf');
       if (!publicDoc(doc, req).serverPrint) throw new HttpErr(403, 'Printing from the server is not enabled');
       const miss = doc.fields.find((f) => f.required && !f.hidden && !values[f.key] && !(IMG(f.type) && f.prefill === 'instance' && f.value)); if (miss) throw new HttpErr(400, 'Missing: ' + miss.label);
-      return json(res, 200, await ippPrint(pdf, Math.round(num(body.copies, 1, 1, 20)), doc.title));
+      const copies = Math.round(num(body.copies, 1, 1, admin ? 20 : 5));
+      try {
+        const r = await ippPrint(pdf, copies, doc.title); audit(req, 'print', { doc: doc.id, copies, jobId: r.jobId }); return json(res, 200, r);
+      } catch (e) { // the admin sees what the printer said; everyone else gets no internal addresses
+        audit(req, 'print.fail', { doc: doc.id, error: e.message }); console.error('print failed: ' + e.message);
+        if (!admin && e instanceof HttpErr && e.status === 502) throw new HttpErr(502, 'The printer did not accept the job. Please try again later or ask the office.');
+        throw e;
+      }
     }
   }
 
   // ---- login
   if (m === 'POST' && p === '/api/login') {
-    checkFails(req);
+    rateLimit(req, 'auth', 20); checkFails(req);
     const body = await readJson(req, 1e4);
-    if (!checkPw(body.password)) { await noteFail(req); throw new HttpErr(401, 'Wrong password'); }
-    fails.delete(clientIp(req));
+    if (!(await checkPw(body.password))) { await noteFail(req); audit(req, 'login.fail', {}); throw new HttpErr(401, 'Wrong password'); }
+    fails.delete(clientIp(req)); audit(req, 'login.ok', {});
     return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, newSession(), SESSION_MS / 1000) });
   }
   if (m === 'POST' && p === '/api/logout') return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, 'x', 0) });
@@ -397,7 +468,11 @@ async function route(req, res) {
   // ---- admin API
   if (!p.startsWith('/api/admin/')) throw new HttpErr(404, 'Not found');
   if (!isAdmin(req)) throw new HttpErr(401, 'Login required');
-  if (m === 'GET' && p === '/api/admin/me') return json(res, 200, { ok: true, envPassword: !!process.env.ADMIN_PASSWORD });
+  if (m === 'GET' && p === '/api/admin/me') return json(res, 200, { ok: true, envPassword: !!ENV_AUTH }, { 'Set-Cookie': cookie(req, newSession(), SESSION_MS / 1000) }); // sliding session
+  if (m === 'POST' && p === '/api/admin/sessions/revoke') { // "sign out everywhere": a new secret invalidates every session and unlock cookie
+    db.secret = rid(32); save(); audit(req, 'sessions.revoke', {});
+    return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, newSession(), SESSION_MS / 1000) });
+  }
   if (m === 'POST' && p === '/api/admin/printer/test') { // diagnose a printer URL before saving it
     const u = str((await readJson(req, 1e4)).url, 500).trim();
     if (!/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
@@ -408,20 +483,22 @@ async function route(req, res) {
       const b = await readJson(req), u = str(b.printerUrl, 500).trim();
       if (u && !/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
       db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint, printButton: str(b.printButton, 40).trim() || DEFAULTS.printButton }; save();
+      audit(req, 'settings.update', { printerUrl: u, publicPrint: db.settings.publicPrint });
     }
     if (m === 'GET' || m === 'PUT') return json(res, 200, db.settings);
   }
   if (m === 'POST' && p === '/api/admin/password') {
-    if (process.env.ADMIN_PASSWORD) throw new HttpErr(400, 'The password is set through ADMIN_PASSWORD and cannot be changed here');
+    if (ENV_AUTH) throw new HttpErr(400, 'The password is set through ADMIN_PASSWORD and cannot be changed here');
     const b = await readJson(req, 1e4);
-    if (!checkPw(b.current)) throw new HttpErr(403, 'Current password is wrong');
+    if (!(await checkPw(b.current))) throw new HttpErr(403, 'Current password is wrong');
     if (str(b.next, 500).length < 8) throw new HttpErr(400, 'New password needs at least 8 characters');
-    db.auth = hashPw(b.next); db.secret = rid(32); save(); // rotating the secret signs out all other sessions
+    db.auth = await hashPwAsync(b.next); db.secret = rid(32); save(); audit(req, 'password.change', {}); // rotating the secret signs out all other sessions
     return json(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, newSession(), SESSION_MS / 1000) });
   }
   if (m === 'POST' && p === '/api/admin/images') { // default image for an image field; the field refers to it by name
     const buf = await readBody(req, 5 * 1024 * 1024), t = imgType(buf); if (!t) throw new HttpErr(400, 'Only PNG and JPEG images are supported');
-    const name = rid(8) + '.' + t; fs.writeFileSync(path.join(IMAGES, name), buf);
+    checkImage(buf);
+    const name = rid(8) + '.' + t; fs.writeFileSync(path.join(IMAGES, name), buf, { mode: 0o600 });
     return json(res, 200, { name });
   }
   if (m === 'GET' && (a = /^\/api\/admin\/images\/([\w-]+\.(?:png|jpg))$/.exec(p))) {
@@ -433,7 +510,7 @@ async function route(req, res) {
       const buf = await readBody(req, MAX_PDF), pages = await inspectPdf(buf);
       const title = str(url.searchParams.get('title'), 120).trim() || 'Untitled';
       const doc = { id: rid(8), slug: rid(10), title, description: '', tags: [], listed: false, serverPrint: true, password: null, pages, rotation: cleanRotation([], pages), fields: [], created: Date.now(), updated: Date.now() };
-      fs.writeFileSync(pdfPath(doc.id), buf); db.docs.unshift(doc); save();
+      fs.writeFileSync(pdfPath(doc.id), buf, { mode: 0o600 }); db.docs.unshift(doc); save(); audit(req, 'doc.create', { doc: doc.id, title });
       return json(res, 200, adminDoc(doc));
     }
   }
@@ -450,27 +527,27 @@ async function route(req, res) {
         }
         if (b.password !== undefined) { // '' removes the password, a string sets a new one, absent keeps it
           const pw = str(b.password, 200);
-          if (pw && pw.length < 4) throw new HttpErr(400, 'The form password needs at least 4 characters');
-          doc.password = pw ? hashPw(pw) : null;
+          if (pw && pw.length < 8) throw new HttpErr(400, 'The form password needs at least 8 characters');
+          doc.password = pw ? await hashPwAsync(pw) : null; audit(req, pw ? 'doc.password.set' : 'doc.password.clear', { doc: doc.id });
         }
         Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, serverPrint: b.serverPrint !== false,
           rotation: b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
         save(); return json(res, 200, adminDoc(doc));
       }
       if (m === 'DELETE') {
-        db.docs = db.docs.filter((d) => d !== doc); save(); fs.rmSync(pdfPath(doc.id), { force: true });
+        db.docs = db.docs.filter((d) => d !== doc); save(); fs.rmSync(pdfPath(doc.id), { force: true }); pdfCache.delete(doc.id); audit(req, 'doc.delete', { doc: doc.id, title: doc.title });
         for (const f of doc.fields) if (IMG(f.type) && f.value) fs.rmSync(path.join(IMAGES, f.value), { force: true });
         return json(res, 200, { ok: true });
       }
     }
     if (a[2] === '/pdf' && m === 'PUT') {
       const buf = await readBody(req, MAX_PDF); doc.pages = await inspectPdf(buf);
-      fs.writeFileSync(pdfPath(doc.id), buf); doc.rotation = cleanRotation([], doc.pages); doc.fields = cleanFields(doc.fields, doc.pages); doc.updated = Date.now(); save();
+      fs.writeFileSync(pdfPath(doc.id), buf, { mode: 0o600 }); pdfCache.delete(doc.id); doc.rotation = cleanRotation([], doc.pages); doc.fields = cleanFields(doc.fields, doc.pages); doc.updated = Date.now(); save();
       return json(res, 200, adminDoc(doc));
     }
     if (a[2] === '/render' && m === 'POST') { // preview of unsaved field layout with sample values
       const b = await readJson(req), fields = cleanFields(b.fields, doc.pages);
-      return send(res, 200, await renderPdf(doc, fields, b.values ? cleanValues(b.values) : sampleValues(fields), b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, true), 'application/pdf');
+      return send(res, 200, await withRender(() => renderPdf(doc, fields, b.values ? cleanValues(b.values) : sampleValues(fields), b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, true)), 'application/pdf');
     }
     if (a[2] === '/link' && m === 'POST') { doc.slug = rid(10); save(); return json(res, 200, adminDoc(doc)); }
   }
@@ -499,6 +576,7 @@ const server = http.createServer((req, res) => {
   });
 });
 function start({ port = PORT, host = HOST } = {}) {
+  server.requestTimeout = 60000; server.headersTimeout = 30000; // slow clients must not hold connections for long
   return new Promise((ok, no) => {
     server.once('error', no);
     server.listen(port, host, () => { const a = server.address(); console.log('stampfill ' + VERSION + ' listening on http://' + a.address + ':' + a.port + '  (data: ' + DATA + ')'); ok(server); });
@@ -512,7 +590,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, migrate, fails, pruneFails, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, migrate, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -648,10 +726,14 @@ async function drawPage(pdf, n, canvas, cssWidth, density) {
 }
 `;
 
-const page = (title, body, js) => '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">' +
-  '<link rel="modulepreload" href="/vendor/pdf.mjs"><link rel="preload" href="/vendor/pdf.worker.mjs" as="script" crossorigin>' +
-  '<title>' + title + '</title><style>' + CSS + '</style><style id="pageStyle"></style></head><body>' + body +
-  '<main id="app"></main><div id="printArea"></div><div id="toast"></div><script type="module">' + LIB + js + '</script></body></html>';
+function page(title, body, js) { // the inline script is a constant, so the CSP can name its hash instead of allowing inline scripts
+  const script = LIB + js, hash = crypto.createHash('sha256').update(script).digest('base64');
+  const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">' +
+    '<link rel="modulepreload" href="/vendor/pdf.mjs"><link rel="preload" href="/vendor/pdf.worker.mjs" as="script" crossorigin>' +
+    '<title>' + title + '</title><style>' + CSS + '</style><style id="pageStyle"></style></head><body>' + body +
+    '<main id="app"></main><div id="printArea"></div><div id="toast"></div><script type="module">' + script + '</script></body></html>';
+  return { html, csp: csp("'self' 'sha256-" + hash + "' 'wasm-unsafe-eval'") };
+}
 
 // ---------------------------------------------------------------- public page: list + form
 const PUBLIC_HTML = page('Forms', '<header><a href="/" id="home">' + LOGO_SVG + '<span id="homeT">Forms</span></a><span class="sp"></span></header>', String.raw`
@@ -703,20 +785,25 @@ async function formView() {
     app.append(h('h1', {}, 'Document not found'), h('p', { class: 'muted' }, 'This link is not valid any more.')); return;
   }
   document.title = doc.title; $('#homeT').textContent = doc.siteTitle;
-  // values from the link: #key=value (preferred, never sent to the server) or ?key=value
-  const fromUrl = new URLSearchParams(location.search);
-  new URLSearchParams(location.hash.slice(1)).forEach((v, k) => fromUrl.set(k, v));
-  const LS = 'stampfill:';
+  // values from the link: only #key=value, which never leaves the browser (a query string would reach server and proxy logs)
+  const fromUrl = new URLSearchParams(location.hash.slice(1));
+  const LS = 'stampfill:', TTL = 30 * 86400000; // remembered values expire after 30 days
   const IMG = t => t === 'image' || t === 'signature';
   const store = {
-    get(k) { try { return localStorage.getItem(LS + k); } catch (e) { return null; } },
-    set(k, v) { try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, v); } catch (e) {} },
+    get(k) {
+      try {
+        const raw = localStorage.getItem(LS + k); if (raw == null) return null;
+        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) { if (Date.now() - o.t > TTL) { localStorage.removeItem(LS + k); return null; } return o.v; } } catch (e) { /* value from an older version */ }
+        return raw;
+      } catch (e) { return null; }
+    },
+    set(k, v) { try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, JSON.stringify({ v, t: Date.now() })); } catch (e) {} },
   };
   const inputs = {}, rows = {};
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
   const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
-  const HINT = { browser: 'Remembered in this browser', url: 'Can be carried in a link', instance: '', today: "Today's date" };
+  const HINT = { browser: 'Remembered on this device for 30 days', url: 'Can be carried in a link', instance: '', today: "Today's date" };
   const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const toIso = v => { const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(String(v).trim()); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : v; };
 
@@ -745,11 +832,17 @@ async function formView() {
     const draw = f.type === 'signature' && h('button', { class: 'small', onclick: () => sigPad(v => { st.set(v); changed(); }) }, 'Draw signature');
     const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? 'Replace image' : 'Choose image'; };
     st.set = v => { st.value = v || ''; show(); };
-    const changed = () => { if (f.prefill === 'browser') store.set(f.key, st.value); rows[f.key].classList.remove('bad'); schedule(); };
+    const saved = f.prefill === 'browser' ? store.get(f.key) : null;
+    // pictures and signatures are only remembered when the user says so: shared computers must not hand them to the next person
+    const rem = st.rem = f.prefill === 'browser' ? h('input', { type: 'checkbox', class: 'remember', checked: !!saved }) : null;
+    const remember = () => { if (rem) store.set(f.key, rem.checked ? st.value : ''); };
+    if (rem) rem.addEventListener('change', remember);
+    const changed = () => { remember(); rows[f.key].classList.remove('bad'); schedule(); };
     file.addEventListener('change', async () => { const fl = file.files[0]; file.value = ''; if (!fl) return; try { st.set(await imageData(fl, 1200)); changed(); } catch (e) { fail(e); } });
-    st.set(f.prefill === 'browser' ? store.get(f.key) : '');
-    const hint = f.prefill === 'instance' && f.value ? 'A default image is provided; you can replace it' : HINT[f.prefill];
-    return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, draw, pick, clear, file)), hint && h('div', { class: 'hint' }, hint));
+    st.set(saved || '');
+    const hint = f.prefill === 'instance' && f.value ? 'A default image is provided; you can replace it' : f.prefill === 'browser' ? '' : HINT[f.prefill];
+    return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, draw, pick, clear, file)),
+      rem && h('label', { class: 'chk small', style: 'margin-top:6px' }, rem, 'Remember on this device (30 days)'), hint && h('div', { class: 'hint' }, hint));
   }
   // a drawing pad for signatures: pointer and touch, smoothed strokes, trimmed to the ink with a transparent background
   function sigPad(done) {
@@ -856,7 +949,7 @@ async function formView() {
     copyText(location.origin + location.pathname + (p.toString() ? '#' + p.toString() : ''));
   }
   function forget() {
-    doc.fields.filter(f => f.prefill === 'browser').forEach(f => { store.set(f.key, ''); put(f, ''); });
+    doc.fields.filter(f => f.prefill === 'browser').forEach(f => { store.set(f.key, ''); put(f, ''); if (inputs[f.key].rem) inputs[f.key].rem.checked = false; });
     schedule(); toast('Saved values removed from this browser');
   }
   const guard = fn => async e => { const b = e.currentTarget; b.disabled = true; try { await fn(); } catch (err) { fail(err); } b.disabled = false; };
@@ -960,6 +1053,10 @@ async function settingsView() {
     h('label', {}, 'Label of that button'), pbtn,
     h('label', { class: 'chk', style: 'margin-top:12px' }, pub, 'Let everyone with a document link use this printer (otherwise only while logged in as admin)'),
     h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value }); toast('Saved'); } catch (e) { fail(e); } } }, 'Save settings'))),
+    h('h2', {}, 'Sessions'),
+    h('div', { class: 'panel', style: 'max-width:560px' },
+      h('p', { class: 'muted small', style: 'margin:0 0 10px' }, 'Admin sessions last 12 hours of inactivity. Signing out everywhere also closes every unlocked form in every browser.'),
+      h('button', { onclick: async () => { try { await api('POST', '/api/admin/sessions/revoke'); toast('All other sessions signed out'); } catch (e) { fail(e); } } }, 'Sign out all other sessions')),
     h('h2', {}, 'Password'),
     me.envPassword ? h('p', { class: 'muted' }, 'The admin password is set through the ADMIN_PASSWORD environment variable.')
       : h('div', { class: 'panel', style: 'max-width:560px' }, h('label', {}, 'Current password'), cur, h('label', {}, 'New password (at least 8 characters)'), nxt,

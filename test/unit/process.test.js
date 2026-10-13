@@ -45,6 +45,20 @@ test('generates and prints an admin password on first start, listens, and stops 
   } finally { if (r.child.exitCode === null) r.child.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('reads the admin password from ADMIN_PASSWORD_FILE', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stampfill-proc-')), port = await freePort(), pwFile = path.join(dir, 'admin.secret');
+  fs.writeFileSync(pwFile, 'from-the-file-123\n');
+  const r = await run({ DATA_DIR: path.join(dir, 'data'), PORT: String(port), HOST: '127.0.0.1', ADMIN_PASSWORD_FILE: pwFile });
+  try {
+    assert.equal(r.code, null, r.err);
+    const login = (password) => fetch('http://127.0.0.1:' + port + '/api/login', { method: 'POST', headers: { 'X-Requested-With': 'stampfill' }, body: JSON.stringify({ password }) });
+    assert.equal((await login('from-the-file-123')).status, 200); assert.equal((await login('nope')).status, 401);
+    assert.ok(!r.out.includes('Generated admin password'));
+  } finally { if (r.child.exitCode === null) r.child.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+  const bad = await run({ DATA_DIR: path.join(dir, 'data'), PORT: String(port), ADMIN_PASSWORD_FILE: path.join(dir, 'missing') }, { wait: /never/ });
+  assert.equal(bad.code, 1); assert.match(bad.err, /cannot read .*missing/);
+});
+
 test('exits with the error when the port is taken', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stampfill-proc-'));
   const blocker = net.createServer(); await new Promise((ok) => blocker.listen(0, '127.0.0.1', ok));

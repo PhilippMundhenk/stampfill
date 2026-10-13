@@ -5,16 +5,18 @@
 # resolve inside containers):
 #   docker compose exec cups lpadmin -p Office -E -v ipp://192.168.1.50/ipp/print -m everywhere
 # and enter  http://cups:631/printers/Office  as the printer URL in stampfill's Settings.
-# The CUPS web interface is at http://<host>:631 (user "print", password "print" — change CUPSADMIN/CUPSPASSWORD).
+#
+# CUPS is deliberately NOT published on the network: whoever controls the queue receives every printed
+# form. Administer it with "docker compose exec cups lpadmin ...". If you need the web interface, add
+#   ports: ["127.0.0.1:631:631"]
+# and reach it through an SSH tunnel. CUPSPASSWORD must be set in .env.
 services:
   cups:
-    image: olbat/cupsd:latest
+    image: olbat/cupsd:latest@sha256:3a9d7c319f4153c87e16db4edb6ef6c317aa7e71f8abe65c3419cc9aca851194
     restart: unless-stopped
-    ports:
-      - "631:631"
     environment:
       CUPSADMIN: ${CUPSADMIN:-print}
-      CUPSPASSWORD: ${CUPSPASSWORD:-print}
+      CUPSPASSWORD: ${CUPSPASSWORD:?set CUPSPASSWORD in .env}
     volumes:
       - cups-config:/etc/cups
     healthcheck:

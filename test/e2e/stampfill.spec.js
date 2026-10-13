@@ -239,6 +239,8 @@ test('admin configures the network printer', async () => {
   await admin.click('text=Change password'); await expect(admin.locator('#toast')).toHaveText('Current password is wrong');
   await admin.fill('input[autocomplete=current-password]', PASSWORD);
   await admin.click('text=Change password'); await expect(admin.locator('#toast')).toHaveText('Password changed');
+  await admin.click('text=Sign out all other sessions'); await expect(admin.locator('#toast')).toHaveText('All other sessions signed out');
+  await expect(admin.locator('#nav')).toContainText('Settings'); // this session carries on with a fresh cookie
   await cov.snapshot(admin); // "Log out" reloads the page in place
   await admin.click('text=Log out'); await expect(admin.locator('form.login input[type=password]')).toBeVisible(); // the settings page has password inputs too until the reload lands
   await admin.fill('form.login input[type=password]', 'test-pass-456'); await admin.click('form.login button.pri');
@@ -274,7 +276,8 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#f_date')).toHaveValue(TODAY);
   await expect(user.locator('#f_birthday')).toHaveValue('1985-12-24'); // from the link, normalised for the date input
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
-  await expect(user.locator('.panel label')).toHaveCount(9);
+  await expect(user.locator('.panel label')).toHaveCount(10); // 9 fields plus "Remember on this device" of the signature
+  await expect(user.locator('input.remember')).not.toBeChecked(); // pictures are not remembered unless asked
   await expect(user.locator('#f_agree')).toBeChecked(); // checkbox from the link
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden(); // no signature yet
   await expect(user.locator('.imgbox:has(#f_stamp) .thumb')).toBeVisible(); // the admin's default stamp
@@ -287,6 +290,7 @@ test('form prefills from the link and from fixed values, validates required fiel
     await user.fill('#f_full_name', 'Jürgen Müller-Weiß'); await user.fill('#f_date', '2026-10-13');
     await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
   });
+  await user.locator('input.remember').check(); // pictures are only remembered on request (before the modal pad opens)
   // signature pad: cancel, empty, then a real stroke
   await user.click('text=Draw signature'); await expect(user.locator('dialog.sigdlg')).toBeVisible();
   await user.click('dialog.sigdlg >> text=Cancel'); await expect(user.locator('dialog.sigdlg')).toHaveCount(0);

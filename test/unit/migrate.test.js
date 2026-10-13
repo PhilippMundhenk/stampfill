@@ -45,6 +45,7 @@ test('public and admin endpoints serve the migrated document', async () => {
   const r = await fetch(base + '/api/d/AbCdEfGhIj/render', { method: 'POST', headers: { 'X-Requested-With': 'stampfill' }, body: JSON.stringify({ values: { full_name: 'Old User', date: '2026-10-13', agree: '1' } }) });
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal((await fetch(base + '/healthz')).status, 200);
+  assert.match((fs.statSync(path.join(DATA, 'db.json')).mode & 0o777).toString(8), /^(600|666)$/, 'db.json is private (Windows reports 666)');
 });
 
 test('the stored admin password still logs in and can be changed (no ADMIN_PASSWORD set)', async () => {

@@ -3,6 +3,7 @@
 #   docker compose up -d
 # For automatic HTTPS add the Caddy overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
+# For printers that do not accept PDF add the CUPS overlay (see README, "Printing").
 services:
   stampfill:
     image: ghcr.io/philippmundhenk/stampfill:latest
@@ -12,13 +13,24 @@ services:
     # named volume below. With a bind mount (e.g. ./data:/data) set PUID/PGID in .env to the folder owner.
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
-      - "8080:8080"
+      - "${BIND:-0.0.0.0}:8080:8080"     # BIND=127.0.0.1 when a reverse proxy on this host is in front
     environment:
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}   # empty: a random password is printed to the log on first start
-      TRUST_PROXY: ${TRUST_PROXY:-1}        # take the client IP from X-Forwarded-For (login rate limit)
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}  # empty: a random password is printed to the log on first start
+      TRUST_PROXY: ${TRUST_PROXY:-0}       # 1 only behind a reverse proxy that sets X-Forwarded-For (the Caddy overlay does)
+      SECURE_COOKIES: ${SECURE_COOKIES:-0} # 1 when served over HTTPS by a proxy that does not send X-Forwarded-Proto
       MAX_PDF_MB: ${MAX_PDF_MB:-25}
     volumes:
       - stampfill-data:/data            # or a bind mount: ./data:/data (see "File permissions" in the README)
+    # the process only ever writes to /data: run it read-only, without capabilities, with limits
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 128
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 30s

@@ -94,7 +94,9 @@ Everything is configured through environment variables.
 | `PORT` | `8080` | Listen port |
 | `HOST` | `0.0.0.0` | Listen address |
 | `DATA_DIR` | `./data` (`/data` in Docker) | Holds `db.json`, uploaded PDFs and the optional `font.ttf` |
-| `TRUST_PROXY` | unset | Set to `1` behind a reverse proxy so the login rate limit sees real client IPs |
+| `TRUST_PROXY` | unset | `1` only behind a reverse proxy you control: the client address is then the last `X-Forwarded-For` entry and `X-Forwarded-Proto` decides the `Secure` cookie flag |
+| `SECURE_COOKIES` | unset | `1` forces the `Secure` flag on cookies when HTTPS is terminated by a proxy that does not send `X-Forwarded-Proto` |
+| `ADMIN_PASSWORD_FILE` | unset | Read the admin password from this file instead of `ADMIN_PASSWORD` (Docker secrets) |
 | `MAX_PDF_MB` | `25` | Upload limit for templates |
 
 Runtime settings (site title, printer URL, public printing) live in the admin interface under
@@ -137,8 +139,10 @@ writable, so a wrong setting shows up in `docker compose logs` right away.
 ### Behind your own reverse proxy
 
 Point nginx, Traefik or similar at port 8080, forward `X-Forwarded-For` and
-`X-Forwarded-Proto`, and keep `TRUST_PROXY=1`. The session cookie is marked `Secure` only when
-`X-Forwarded-Proto` says `https`.
+`X-Forwarded-Proto`, set `TRUST_PROXY=1` and `BIND=127.0.0.1` in `.env`. The client address is
+taken from the last `X-Forwarded-For` entry, the one your proxy appends. The session cookie is
+marked `Secure` when `X-Forwarded-Proto` says `https` (or always, with `SECURE_COOKIES=1`), and
+the app then also sends HSTS.
 
 ### Printing from the server
 
@@ -166,9 +170,12 @@ docker compose exec cups lpadmin -p Office -E -v ipp://192.168.1.50/ipp/print -m
 ```
 
 Then enter `http://cups:631/printers/Office` as the printer URL in Settings and press "Test
-printer": a CUPS queue always accepts PDF. The CUPS web interface is on port 631 (login from
-`.env`, `CUPSADMIN`/`CUPSPASSWORD`). Without Docker, any CUPS server on the network works the
-same way: point stampfill at `http://cups-host:631/printers/<queue>`.
+printer": a CUPS queue always accepts PDF. The sidecar is not reachable from the network on
+purpose, since whoever controls the queue receives every printed form; administer it with
+`docker compose exec cups lpadmin ...` (the overlay file explains how to reach the web interface
+through an SSH tunnel if you need it). `CUPSPASSWORD` must be set in `.env`. Without Docker, any
+CUPS server on the network works the same way: point stampfill at
+`http://cups-host:631/printers/<queue>`, preferably over `ipps://` where available.
 
 Other IPP status codes are explained in the error message; the most common besides 0x040a are
 `0x0406` (wrong path in the printer URL) and `0x0506` (the printer is not accepting jobs). By default only a
@@ -180,9 +187,11 @@ label is a setting ("Print at home" by default), and each document can disable i
 
 All state is in the data volume (`stampfill-data` in Compose, `DATA_DIR` otherwise):
 `db.json` with the documents, field layouts, settings, admin password hash and session secret,
-the `pdfs/` folder with the templates, and the optional `font.ttf`. Nothing else is kept on the
-server, so backing up that directory is a complete backup. Browser-remembered field values live in
-each user's browser only. Upgrading is `docker compose pull && docker compose up -d`. The `db.json` format
+the `pdfs/` and `images/` folders, `audit.log` (logins, settings changes, document changes and
+print jobs, never form values; rotate it with the host's tools) and the optional `font.ttf`.
+Nothing else is kept on the server, so backing up that directory is a complete backup. It also
+holds the signing secret and password hashes, so treat backups as secrets. Browser-remembered
+field values live in each user's browser only, for 30 days. Upgrading is `docker compose pull && docker compose up -d`. The `db.json` format
 is forward compatible; missing settings get their defaults.
 
 ### Without Docker

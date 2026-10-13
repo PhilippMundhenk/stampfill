@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- Findings of the security review (docs/security.md) addressed: proxy-header handling and a
+  server-wide brake on password guessing; image size gate against decompression bombs; rate
+  limits and a concurrency cap on public rendering and printing, async scrypt; CUPS sidecar no
+  longer published and requires a password; opt-in, expiring browser memory for pictures and
+  signatures; 8-character form passwords; 12-hour sliding admin sessions, expiring unlock tokens
+  and "sign out everywhere"; no redirects and bounded answers from printers; HSTS and a
+  `SECURE_COOKIES` switch; CSP with script hashes instead of 'unsafe-inline'; private file modes;
+  generic printer errors for strangers; hidden fixed values enforced server-side; a quiet
+  `/healthz`; actions pinned by commit, base images by digest, provenance and SBOM for the image;
+  read-only container with dropped capabilities and limits; fragment-only link prefill;
+  `ADMIN_PASSWORD_FILE`; an append-only audit log.
+
 ### Added
 - Field type "Signature": users draw on screen (touch or mouse, with undo and clear; the drawing
   is trimmed to the ink on a transparent background) or upload a picture.

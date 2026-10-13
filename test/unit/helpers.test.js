@@ -117,6 +117,29 @@ test('signature fields are image fields with their own defaults', () => {
   assert.equal(i.maxWidth, 120);
 });
 
+// a PNG header that claims w x h pixels (a decompression bomb needs nothing more to be dangerous)
+const pngHeader = (w, hgt) => { const b = Buffer.alloc(33); PNG.copy(b, 0, 0, 16); b.writeUInt32BE(w, 16); b.writeUInt32BE(hgt, 20); return b; };
+test('images are checked for their declared size before anything decodes them', async () => {
+  assert.deepEqual(app.imgDims(PNG), [1, 1]);
+  assert.deepEqual(app.imgDims(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xc0, 0x00, 0x11, 8, 0x01, 0x2c, 0x02, 0x58, 3])), [600, 300], 'JPEG SOF0 after an APP0 segment');
+  assert.equal(app.imgDims(Buffer.from('GIF89a')), null);
+  assert.equal(app.checkImage(pngHeader(4000, 4000)).length, 33);
+  assert.throws(() => app.checkImage(pngHeader(20000, 20000)), /too large/);
+  assert.throws(() => app.checkImage(pngHeader(0, 100)), /unreadable/);
+  fs.mkdirSync(path.join(tmp, 'pdfs'), { recursive: true }); fs.copyFileSync(SAMPLE, path.join(tmp, 'pdfs', 'bomb.pdf'));
+  const f = app.cleanFields([{ label: 'Sig', type: 'image', x: 10, y: 10 }], 1);
+  await assert.rejects(app.renderPdf({ id: 'bomb' }, f, { sig: 'data:image/png;base64,' + pngHeader(30000, 30000).toString('base64') }), /too large/);
+});
+
+test('hidden fixed values cannot be changed by the request', async () => {
+  fs.mkdirSync(path.join(tmp, 'pdfs'), { recursive: true }); fs.copyFileSync(SAMPLE, path.join(tmp, 'pdfs', 'fixed.pdf'));
+  const f = app.cleanFields([{ label: 'Issued by', x: 100, y: 100, prefill: 'instance', value: 'Office', hidden: true }, { label: 'Note', x: 100, y: 80, prefill: 'instance', value: 'Editable' }], 1);
+  const text = async (values) => (await drawSizes(await app.renderPdf({ id: 'fixed' }, f, values))).text;
+  const t = await text({ issued_by: 'HACKED', note: 'Changed' });
+  assert.ok(!/4841434b4544/i.test(t) && !/HACKED/.test(t), 'the hidden fixed value is printed from the document, not from the request');
+  assert.ok(/4368616e676564/i.test(t) || /Changed/.test(t), 'a visible fixed value is a default the user may change');
+});
+
 test('image fields: prefill rules, value validation, type sniffing', () => {
   assert.equal(app.cleanPrefill('image', 'url'), 'none'); assert.equal(app.cleanPrefill('image', 'browser'), 'browser');
   assert.equal(app.cleanPrefill('image', 'instance'), 'instance'); assert.equal(app.cleanPrefill('text', 'url'), 'url');
@@ -167,14 +190,16 @@ test('cleanTags trims, de-duplicates and caps', () => {
 });
 
 test('cleanValues stringifies and bounds submitted values', () => {
-  assert.deepEqual(app.cleanValues({ a: 1, b: null, c: 'x'.repeat(5000) }), { a: '1', b: '', c: 'x'.repeat(4000) });
-  assert.deepEqual(app.cleanValues('nope'), {});
+  assert.deepEqual({ ...app.cleanValues({ a: 1, b: null, c: 'x'.repeat(5000) }) }, { a: '1', b: '', c: 'x'.repeat(4000) });
+  assert.deepEqual({ ...app.cleanValues('nope') }, {});
+  assert.equal(app.cleanValues({})['constructor'], undefined, 'no prototype properties leak into values');
+  assert.equal(app.cleanValues({ img: 'data:image/png;base64,' + 'A'.repeat(4e6) }).img.length, 3e6, 'data URLs are capped');
 });
 
-test('checkPw compares against ADMIN_PASSWORD', () => {
-  assert.equal(app.checkPw('unit-pass-123'), true);
-  assert.equal(app.checkPw('unit-pass-124'), false);
-  assert.equal(app.checkPw(undefined), false);
+test('checkPw compares against ADMIN_PASSWORD', async () => {
+  assert.equal(await app.checkPw('unit-pass-123'), true);
+  assert.equal(await app.checkPw('unit-pass-124'), false);
+  assert.equal(await app.checkPw(undefined), false);
   const h = app.hashPw('secret'); assert.match(h, /^[\w-]+:[0-9a-f]{64}$/);
 });
 
@@ -193,7 +218,7 @@ test('renderPdf stamps values onto the template', async () => {
   fields.push(...app.cleanFields([{ label: 'Note', type: 'static', value: 'Do not write below', x: 100, y: 600 }, { label: 'Sig', type: 'image', x: 100, y: 500, maxWidth: 80 }, { label: 'Sig2', type: 'image', x: 300, y: 500 }], 1));
   const pdf = await app.renderPdf({ id: 'doc1' }, fields, { name: 'Jürgen Müller', when: '2026-10-13', agree: '1', notes: 'line one\nline two', note: 'ignored',
     sig: 'data:image/png;base64,' + PNG.toString('base64'), sig2: 'data:image/png;base64,bm90IGFuIGltYWdl' });
-  await assert.rejects(app.renderPdf({ id: 'doc1' }, fields, { sig: 'data:image/png;base64,' + PNG.subarray(0, 20).toString('base64') }), /could not be read/);
+  await assert.rejects(app.renderPdf({ id: 'doc1' }, fields, { sig: 'data:image/png;base64,' + PNG.subarray(0, 20).toString('base64') }), /unreadable|could not be read/);
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
   assert.ok(pdf.length > fs.statSync(SAMPLE).size, 'output should contain added content');
   const { PDFDocument } = require('pdf-lib');

@@ -50,6 +50,8 @@ function createMockIpp(outDir, options = {}) {
       // test hooks via the job name (= document title): simulate printer failures
       const name = r.attrs['job-name'] || '';
       if (name === 'http-error') { res.writeHead(500, { 'Content-Type': 'text/plain' }); return res.end('printer exploded'); }
+      if (name === 'redirect') { res.writeHead(302, { Location: 'http://127.0.0.1:1/' }); return res.end(); }
+      if (name === 'huge') { res.writeHead(200, { 'Content-Type': 'application/ipp' }); return res.end(Buffer.alloc(2 * 1024 * 1024, 7)); }
       if (name === 'short-answer') { res.writeHead(200, { 'Content-Type': 'application/ipp' }); return res.end(Buffer.from([2, 0])); }
       const bad = name === 'reject-me' || !formats.includes(r.attrs['document-format']) || r.doc.subarray(0, 5).toString() !== '%PDF-';
       const jobId = Buffer.alloc(4); jobId.writeInt32BE(42, 0);
