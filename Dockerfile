@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS deps
+# Dependencies are installed on the build platform (not under QEMU emulation when cross-building for
+# arm64): every runtime dependency is pure JavaScript, so node_modules is identical on all platforms.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 FROM node:22-alpine
 LABEL org.opencontainers.image.title="stampfill" \
