@@ -6,7 +6,7 @@
 # For printers that do not accept PDF add the CUPS overlay (see README, "Printing").
 services:
   stampfill:
-    image: ghcr.io/philippmundhenk/stampfill:latest
+    image: ghcr.io/philippmundhenk/stampfill:${STAMPFILL_TAG:-latest}  # pin a version in .env, e.g. STAMPFILL_TAG=1.1
     build: .
     restart: unless-stopped
     # The process runs as this uid:gid and must own /data. Default 1000:1000 matches the image and the

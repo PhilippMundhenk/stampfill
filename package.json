@@ -1,6 +1,6 @@
 {
   "name": "stampfill",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Stamp text onto PDF templates from a web form, then print or download the result",
   "main": "stampfill.js",
   "bin": {

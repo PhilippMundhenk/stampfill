@@ -198,7 +198,8 @@ label is a setting ("Print at home" by default), and each document can disable i
 
 ### Backups and upgrades
 
-All state is in the data volume (`stampfill-data` in Compose, `DATA_DIR` otherwise):
+Releases are tagged (`1.1.0`, `1.1`, `latest`); set `STAMPFILL_TAG` in `.env` to follow a version line
+instead of `latest`. All state is in the data volume (`stampfill-data` in Compose, `DATA_DIR` otherwise):
 `db.json` with the documents, field layouts, settings, admin password hash and session secret,
 the `pdfs/` and `images/` folders, `audit.log` (logins, settings changes, document changes and
 print jobs, never form values; rotate it with the host's tools) and the optional `font.ttf`.

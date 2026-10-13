@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-14
+
 ### Security
 - Second review: PNG size check walks the chunks (a later IHDR no longer slips past), 8-megapixel
   limit; render budget of 60/minute per client and 300/minute server-wide; password brakes per
