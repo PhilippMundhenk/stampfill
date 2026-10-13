@@ -264,33 +264,69 @@ function cleanValues(v) {
   return out;
 }
 
-// ---------------------------------------------------------------- printing (IPP Print-Job, RFC 8011)
-async function ippPrint(pdfBuf, copies, jobName) {
-  const url = db.settings.printerUrl; if (!url) throw new HttpErr(400, 'No printer is configured');
-  const attr = (tag, name, value) => {
-    const n = Buffer.from(name), v = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
-    const h = Buffer.alloc(3); h.writeUInt8(tag, 0); h.writeUInt16BE(n.length, 1);
-    const l = Buffer.alloc(2); l.writeUInt16BE(v.length, 0);
-    return Buffer.concat([h, n, l, v]);
-  };
-  const int = (n) => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+// ---------------------------------------------------------------- printing (IPP, RFC 8011)
+// A tiny IPP client: Print-Job for documents, Get-Printer-Attributes to diagnose a printer. Printers that
+// do not accept application/pdf (many home printers only take raster formats) need a CUPS queue in between.
+const IPP_STATUS = {
+  0x0400: 'bad request', 0x0401: 'forbidden', 0x0402: 'not authenticated', 0x0403: 'not authorized', 0x0404: 'not possible', 0x0405: 'timeout',
+  0x0406: 'not found — check the path of the printer URL', 0x0407: 'gone', 0x0408: 'request too large', 0x0409: 'request value too long',
+  0x040a: 'document format not supported — this printer does not accept PDF over IPP; print through a CUPS queue (see README)',
+  0x040b: 'attributes or values not supported', 0x040c: 'URI scheme not supported', 0x040d: 'charset not supported', 0x040e: 'conflicting attributes',
+  0x0500: 'internal printer error', 0x0501: 'operation not supported', 0x0502: 'service unavailable', 0x0503: 'IPP version not supported',
+  0x0504: 'device error', 0x0505: 'temporary error', 0x0506: 'the printer is not accepting jobs', 0x0507: 'the printer is busy', 0x0508: 'job canceled',
+};
+const ippStatusText = (st) => 'IPP 0x' + st.toString(16).padStart(4, '0') + (IPP_STATUS[st] ? ': ' + IPP_STATUS[st] : '');
+function ippAttr(tag, name, value) {
+  const n = Buffer.from(name), v = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+  const h = Buffer.alloc(3); h.writeUInt8(tag, 0); h.writeUInt16BE(n.length, 1);
+  const l = Buffer.alloc(2); l.writeUInt16BE(v.length, 0);
+  return Buffer.concat([h, n, l, v]);
+}
+const ippInt = (n) => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+// parses an IPP response into { status, attrs: { name: [values] } }; additional values of a 1setOf attribute carry an empty name
+function ippParse(b) {
+  const r = { status: b.readUInt16BE(2), attrs: {} }; let o = 8, last = null;
+  while (o + 3 <= b.length) {
+    const tag = b[o]; if (tag === 0x03) break;
+    if (tag < 0x10) { o++; last = null; continue; } // begin-attribute-group tag
+    const nl = b.readUInt16BE(o + 1), name = b.toString('utf8', o + 3, o + 3 + nl); o += 3 + nl;
+    const vl = b.readUInt16BE(o), v = b.subarray(o + 2, o + 2 + vl); o += 2 + vl;
+    const key = name || last; if (!key) continue;
+    const val = (tag === 0x21 || tag === 0x23) && vl === 4 ? v.readInt32BE(0) : tag === 0x22 ? !!v[0] : v.toString('utf8');
+    (r.attrs[key] = r.attrs[key] || []).push(val); last = key;
+  }
+  return r;
+}
+async function ippSend(url, op, opAttrs, jobAttrs, doc) {
   const body = Buffer.concat([
-    Buffer.from([0x02, 0x00, 0x00, 0x02]), int(1), Buffer.from([0x01]),
-    attr(0x47, 'attributes-charset', 'utf-8'), attr(0x48, 'attributes-natural-language', 'en'),
-    attr(0x45, 'printer-uri', url.replace(/^http/, 'ipp')), attr(0x42, 'requesting-user-name', 'stampfill'),
-    attr(0x42, 'job-name', jobName.slice(0, 200)), attr(0x49, 'document-format', 'application/pdf'),
-    Buffer.from([0x02]), attr(0x21, 'copies', int(copies)), Buffer.from([0x03]), pdfBuf,
+    Buffer.from([0x02, 0x00]), Buffer.from([op >> 8, op & 0xff]), ippInt(1), Buffer.from([0x01]),
+    ippAttr(0x47, 'attributes-charset', 'utf-8'), ippAttr(0x48, 'attributes-natural-language', 'en'), ippAttr(0x45, 'printer-uri', url.replace(/^http/, 'ipp')),
+    ...opAttrs, ...(jobAttrs.length ? [Buffer.from([0x02]), ...jobAttrs] : []), Buffer.from([0x03]), doc || Buffer.alloc(0),
   ]);
   let r, b;
   try {
     r = await fetch(url.replace(/^ipp/, 'http'), { method: 'POST', headers: { 'Content-Type': 'application/ipp' }, body, signal: AbortSignal.timeout(20000) });
     b = Buffer.from(await r.arrayBuffer());
-  } catch (e) { throw new HttpErr(502, 'Printer not reachable'); }
-  if (!r.ok || b.length < 8) throw new HttpErr(502, 'Printer answered HTTP ' + r.status);
-  const status = b.readUInt16BE(2);
-  if (status > 0xff) throw new HttpErr(502, 'Printer rejected the job (IPP status 0x' + status.toString(16).padStart(4, '0') + ')');
-  const i = b.indexOf(Buffer.from('job-id'));
-  return { ok: true, jobId: i > 0 && b.length >= i + 12 ? b.readInt32BE(i + 8) : null };
+  } catch (e) { throw new HttpErr(502, 'Printer not reachable at ' + url.replace(/^ipp/, 'http') + ' — check the address and that port 631 is open'); }
+  if (!r.ok || b.length < 8) throw new HttpErr(502, 'Printer answered HTTP ' + r.status + ' instead of IPP — is this the IPP endpoint (e.g. ipp://printer:631/ipp/print or http://cups:631/printers/NAME)?');
+  return ippParse(b);
+}
+async function ippPrint(pdfBuf, copies, jobName) {
+  const url = db.settings.printerUrl; if (!url) throw new HttpErr(400, 'No printer is configured');
+  const res = await ippSend(url, 0x0002, [ippAttr(0x42, 'requesting-user-name', 'stampfill'), ippAttr(0x42, 'job-name', jobName.slice(0, 200)), ippAttr(0x49, 'document-format', 'application/pdf')],
+    [ippAttr(0x21, 'copies', ippInt(copies))], pdfBuf);
+  if (res.status > 0xff) throw new HttpErr(502, 'Printer rejected the job (' + ippStatusText(res.status) + ')');
+  const id = res.attrs['job-id'];
+  return { ok: true, jobId: id && typeof id[0] === 'number' ? id[0] : null };
+}
+// Get-Printer-Attributes: what the printer is and which document formats it accepts
+async function ippProbe(url) {
+  const want = ['printer-name', 'printer-make-and-model', 'printer-state', 'printer-state-reasons', 'document-format-supported'];
+  const res = await ippSend(url, 0x000b, [ippAttr(0x44, 'requested-attributes', want[0]), ...want.slice(1).map((w) => ippAttr(0x44, '', w))], [], null);
+  if (res.status > 0xff) throw new HttpErr(502, 'Printer refused the query (' + ippStatusText(res.status) + ')');
+  const a = res.attrs, first = (k) => (a[k] && a[k][0] != null ? String(a[k][0]) : '');
+  const formats = (a['document-format-supported'] || []).map(String), state = { 3: 'idle', 4: 'printing', 5: 'stopped' }[first('printer-state')] || 'unknown';
+  return { name: first('printer-name'), model: first('printer-make-and-model'), state, reasons: (a['printer-state-reasons'] || []).map(String).filter((x) => x !== 'none'), formats, pdf: formats.includes('application/pdf') };
 }
 
 // ---------------------------------------------------------------- static vendor files (pdf.js)
@@ -361,6 +397,11 @@ async function route(req, res) {
   if (!p.startsWith('/api/admin/')) throw new HttpErr(404, 'Not found');
   if (!isAdmin(req)) throw new HttpErr(401, 'Login required');
   if (m === 'GET' && p === '/api/admin/me') return json(res, 200, { ok: true, envPassword: !!process.env.ADMIN_PASSWORD });
+  if (m === 'POST' && p === '/api/admin/printer/test') { // diagnose a printer URL before saving it
+    const u = str((await readJson(req, 1e4)).url, 500).trim();
+    if (!/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
+    return json(res, 200, await ippProbe(u));
+  }
   if (p === '/api/admin/settings') {
     if (m === 'PUT') {
       const b = await readJson(req), u = str(b.printerUrl, 500).trim();
@@ -470,7 +511,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, migrate, fails, pruneFails, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, migrate, fails, pruneFails, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -528,7 +569,14 @@ button.small{padding:6px 11px;font-size:13px}
 table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
 th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}th{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);background:var(--bg)}
 tr:last-child td{border-bottom:0}tbody tr{transition:background .12s}tbody tr:hover{background:var(--bg)}td a{color:var(--acc);text-decoration:none;font-weight:600}
-.editor{display:grid;grid-template-columns:1fr 380px;gap:22px;align-items:start}
+.editor{display:grid;grid-template-columns:minmax(0,1fr) 380px;grid-template-areas:"stage doc" "stage fields";gap:22px;align-items:start}
+.ed-doc{grid-area:doc}.ed-fields{grid-area:fields}.ed-fields>h2{margin-top:0}
+.ed-stage{grid-area:stage;position:sticky;top:62px;max-height:calc(100vh - 74px);display:flex;flex-direction:column;min-width:0}.ed-stage>.stage{flex:1;min-height:0}
+@media(min-width:1500px){.editor{grid-template-columns:300px minmax(0,1fr) 380px;grid-template-areas:"doc stage fields"}}
+details.panel>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);user-select:none}
+details.panel>summary::-webkit-details-marker{display:none}
+details.panel>summary::before{content:'';width:0;height:0;border:5px solid transparent;border-left-color:var(--mut);margin-left:2px;transition:transform .15s}
+details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([open]){padding:12px 20px}
 .stage{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:16px;overflow:auto}
 .wrap{position:relative;margin:0 auto;background:#fff;border-radius:3px;box-shadow:0 2px 12px rgba(16,18,24,.18),0 0 0 1px rgba(16,18,24,.06);touch-action:none}
 .wrap canvas{display:block;border-radius:3px}.ov{position:absolute;inset:0;cursor:crosshair}
@@ -545,7 +593,7 @@ tr:last-child td{border-bottom:0}tbody tr{transition:background .12s}tbody tr:ho
 #toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,12px);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:99px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:9;max-width:90vw;box-shadow:var(--sh2);font-weight:500}
 #toast.show{opacity:1;transform:translate(-50%,0)}#toast.bad{background:var(--bad);color:#fff}
 #printArea{display:none}
-@media(max-width:1000px){.editor{grid-template-columns:1fr}}
+@media(max-width:1000px){.editor{grid-template-columns:1fr;grid-template-areas:"doc" "stage" "fields"}.ed-stage{position:static;max-height:none}}
 @media(max-width:860px){.split{grid-template-columns:1fr}main{padding:16px 16px 40px}h1{font-size:22px}header{padding:10px 16px}.panel{padding:16px}
 .actions{position:sticky;bottom:0;z-index:3;margin:16px -16px -16px;padding:12px 16px;background:var(--hdr);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-radius:0 0 var(--r) var(--r)}
 .actions button{flex:1}#toast{bottom:max(16px,env(safe-area-inset-bottom))}}
@@ -796,6 +844,8 @@ const preFor = type => Object.fromEntries(Object.entries(PRE).filter(([k]) => (k
 const DATEFMT = ['YYYY-MM-DD', 'DD.MM.YYYY', 'DD/MM/YYYY', 'MM/DD/YYYY']; // first entry: default for new fields (the server keeps DD.MM.YYYY for stored fields without a format)
 const keyOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
 const linkOf = d => location.origin + '/d/' + d.slug;
+const docOpen = () => { try { return localStorage.getItem('stampfill:docOpen') !== '0'; } catch (e) { return true; } }; // "Document settings" collapsed?
+const setDocOpen = v => { try { localStorage.setItem('stampfill:docOpen', v ? '1' : '0'); } catch (e) {} };
 const slugOf = s => String(s).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 async function boot() {
@@ -850,11 +900,21 @@ async function settingsView() {
   const s = await api('GET', '/api/admin/settings');
   const title = h('input', { type: 'text', value: s.siteTitle }), purl = h('input', { type: 'url', value: s.printerUrl, placeholder: 'http://cups-host:631/printers/NAME' });
   const pub = h('input', { type: 'checkbox', checked: s.publicPrint }), pbtn = h('input', { type: 'text', value: s.printButton, placeholder: 'Print at home', maxLength: 40 });
+  const ptest = h('div', { class: 'hint', id: 'ptest' });
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nxt = h('input', { type: 'password', autocomplete: 'new-password' });
   app.append(h('h1', {}, 'Settings'), h('div', { class: 'panel', style: 'max-width:560px' },
     h('label', {}, 'Site title'), title,
-    h('label', {}, 'Network printer (IPP / CUPS URL, optional)'), purl,
-    h('div', { class: 'hint' }, 'Adds a button to every form that prints on this printer from the server. The printer must accept PDF. Each document can switch the button off.'),
+    h('label', {}, 'Network printer (IPP / CUPS URL, optional)'), h('div', { class: 'row' }, h('div', { class: 'grow' }, purl), h('button', { onclick: async e => {
+      const b = e.currentTarget; b.disabled = true; ptest.className = 'hint'; ptest.textContent = 'Asking the printer…';
+      try {
+        const r = await api('POST', '/api/admin/printer/test', { url: purl.value });
+        ptest.replaceChildren(h('b', {}, (r.model || r.name || 'Printer') + ' — ' + r.state + (r.reasons.length ? ' (' + r.reasons.join(', ') + ')' : '')), h('br'),
+          'Accepts: ' + (r.formats.join(', ') || 'no formats reported'), h('br'),
+          r.pdf ? h('span', { style: 'color:var(--ok)' }, 'Takes PDF — ready to print.') : h('span', { style: 'color:var(--bad)' }, 'Does not take PDF. Print through a CUPS queue instead: see "Printing" in the README (docker-compose.cups.yml).'));
+      } catch (err) { ptest.className = 'hint'; ptest.textContent = err.message; ptest.style.color = 'var(--bad)'; return; } finally { b.disabled = false; }
+      ptest.style.color = '';
+    } }, 'Test printer')), ptest,
+    h('div', { class: 'hint' }, 'Adds a button to every form that prints on this printer from the server. The printer must accept PDF; a CUPS queue converts for printers that do not. Each document can switch the button off.'),
     h('label', {}, 'Label of that button'), pbtn,
     h('label', { class: 'chk', style: 'margin-top:12px' }, pub, 'Let everyone with a document link use this printer (otherwise only while logged in as admin)'),
     h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value }); toast('Saved'); } catch (e) { fail(e); } } }, 'Save settings'))),
@@ -1017,7 +1077,7 @@ async function editView(id) {
         h('div', { class: 'imgbox' }, f.value && h('img', { class: 'thumb', alt: '', src: '/api/admin/images/' + f.value }), h('button', { class: 'small', onclick: () => imgPick.click() }, f.value ? 'Replace image' : 'Upload image'), imgPick),
         h('div', { class: 'hint' }, 'Printed unless the user picks another image on the form. For an image nobody should replace, put it into the PDF template itself.')),
       f.prefill === 'browser' && isImg && h('div', { class: 'hint' }, 'Good for signatures: each user picks their image once and the browser remembers it for every document that has a field with this key.'),
-      f.prefill === 'browser' && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
+      f.prefill === 'browser' && !isImg && h('div', { class: 'hint' }, 'Each user types it once; their browser remembers it for every document that has a field with this key.'),
       f.prefill === 'url' && h('div', { class: 'hint' }, 'Filled from the link, e.g. ' + linkOf(d) + '#' + f.key + '=value. Users get a "Copy link with values" button.'),
       f.prefill === 'today' && h('div', { class: 'hint' }, 'Set to the current date when the form opens. The user can still change it.'),
       !fixed && !f.hidden && h('label', { class: 'chk', style: 'margin-top:12px' }, bind(h('input', { type: 'checkbox', checked: f.required }), 'required', el => el.checked), 'Required'),
@@ -1029,13 +1089,13 @@ async function editView(id) {
     h('div', { class: 'row', style: 'margin-bottom:12px' }, h('a', { href: '#', class: 'muted' }, '← Documents'), h('span', { class: 'grow' }),
       h('a', { class: 'btn', target: '_blank', href: '/d/' + d.slug }, 'Open form'), saveBtn),
     h('div', { class: 'editor' },
-      h('div', {}, h('div', { class: 'row', style: 'margin-bottom:8px' },
+      h('div', { class: 'ed-stage' }, h('div', { class: 'row', style: 'margin-bottom:8px' },
         h('button', { onclick: () => { if (pageNo > 1) { pageNo--; redraw().catch(fail); } } }, '‹'), pageLbl, h('button', { onclick: () => { if (pageNo < d.pages) { pageNo++; redraw().catch(fail); } } }, '›'),
         h('span', { class: 'muted small', style: 'margin-left:10px' }, 'Rotate'), h('button', { class: 'small', title: 'Rotate 90° counter-clockwise', onclick: () => rotBy(-90) }, '⟲'), rotIn, h('button', { class: 'small', title: 'Rotate 90° clockwise', onclick: () => rotBy(90) }, '⟳'),
         h('span', { class: 'grow' }), h('span', { class: 'muted small' }, 'Double-click the page to add a field · drag to move'),
         h('button', { onclick: () => { const c = vp ? vp.convertToPdfPoint(vp.width / 2, vp.height / 3) : [72, 700]; addField(c[0], c[1]); } }, 'Add field')), stage),
-      h('div', {},
-        h('div', { class: 'panel' }, h('label', { style: 'margin-top:0' }, 'Title'), title, h('label', {}, 'Description'), desc, h('label', {}, 'Tags (comma-separated)'), tags,
+      h('details', { class: 'panel ed-doc', open: docOpen(), ontoggle: e => setDocOpen(e.target.open) }, h('summary', {}, 'Document settings'),
+          h('label', {}, 'Title'), title, h('label', {}, 'Description'), desc, h('label', {}, 'Tags (comma-separated)'), tags,
           h('label', { class: 'chk', style: 'margin-top:12px' }, listed, 'Show in the public document list'),
           h('label', { class: 'chk', style: 'margin-top:8px' }, allowPrint, 'Allow printing on the network printer from this form'),
           h('label', {}, 'Link name (optional)'), slugIn,
@@ -1047,7 +1107,7 @@ async function editView(id) {
             h('button', { class: 'small', onclick: () => repl.click() }, 'Replace PDF'), repl,
             h('button', { class: 'small', title: 'Replaces the link name with an unguessable random one', onclick: async () => { if (!confirm('Create a random link? The current link stops working.')) return; try { const r = await api('POST', '/api/admin/docs/' + id + '/link'); d.slug = r.slug; afterSave(); side(); toast('New link created'); } catch (e) { fail(e); } } }, 'Random link'),
             h('button', { class: 'small danger', onclick: async () => { if (!confirm('Delete "' + d.title + '" and its PDF?')) return; try { await api('DELETE', '/api/admin/docs/' + id); dirty = false; location.hash = ''; } catch (e) { fail(e); } } }, 'Delete'))),
-        h('h2', {}, 'Fields'), fieldsBox, propsBox)));
+      h('div', { class: 'ed-fields' }, h('h2', {}, 'Fields'), fieldsBox, propsBox)));
   side(); await redraw();
   window.addEventListener('resize', later);
 }

@@ -24,7 +24,9 @@ function attr(tag, name, value) {
   return Buffer.concat([h, n, l, v]);
 }
 
-function createMockIpp(outDir) {
+// options.pdf = false simulates a printer that only takes raster formats (IPP status 0x040a for PDF jobs)
+function createMockIpp(outDir, options = {}) {
+  const formats = options.pdf === false ? ['image/urf', 'image/pwg-raster'] : ['application/pdf', 'image/pwg-raster', 'image/urf'];
   return http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -36,11 +38,20 @@ function createMockIpp(outDir) {
       fs.mkdirSync(outDir, { recursive: true });
       fs.writeFileSync(path.join(outDir, 'printed.pdf'), r.doc);
       fs.writeFileSync(path.join(outDir, 'job.json'), JSON.stringify({ ct: req.headers['content-type'], version: r.version, op: r.op, attrs: r.attrs, docBytes: r.doc.length }, null, 1));
+      if (r.op === 0x000b) { // Get-Printer-Attributes
+        res.writeHead(200, { 'Content-Type': 'application/ipp' });
+        return res.end(Buffer.concat([
+          Buffer.from([2, 0, 0, 0]), r.requestId, Buffer.from([1]), attr(0x47, 'attributes-charset', 'utf-8'), attr(0x48, 'attributes-natural-language', 'en'),
+          Buffer.from([4]), attr(0x42, 'printer-name', 'Test'), attr(0x41, 'printer-make-and-model', 'Mock IPP printer'),
+          attr(0x23, 'printer-state', (() => { const b = Buffer.alloc(4); b.writeInt32BE(3, 0); return b; })()), attr(0x44, 'printer-state-reasons', 'none'),
+          ...formats.map((f, i) => attr(0x49, i ? '' : 'document-format-supported', f)), Buffer.from([3]),
+        ]));
+      }
       // test hooks via the job name (= document title): simulate printer failures
       const name = r.attrs['job-name'] || '';
       if (name === 'http-error') { res.writeHead(500, { 'Content-Type': 'text/plain' }); return res.end('printer exploded'); }
       if (name === 'short-answer') { res.writeHead(200, { 'Content-Type': 'application/ipp' }); return res.end(Buffer.from([2, 0])); }
-      const bad = name === 'reject-me' || r.attrs['document-format'] !== 'application/pdf' || r.doc.subarray(0, 5).toString() !== '%PDF-';
+      const bad = name === 'reject-me' || !formats.includes(r.attrs['document-format']) || r.doc.subarray(0, 5).toString() !== '%PDF-';
       const jobId = Buffer.alloc(4); jobId.writeInt32BE(42, 0);
       res.writeHead(200, { 'Content-Type': 'application/ipp' });
       res.end(Buffer.concat([

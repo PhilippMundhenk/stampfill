@@ -14,11 +14,15 @@ build step. It is meant for a school office, a club, a small company, a househol
 [![CI](https://github.com/PhilippMundhenk/stampfill/actions/workflows/ci.yml/badge.svg)](https://github.com/PhilippMundhenk/stampfill/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-| Admin: place fields on the template | Public form with live preview |
+![The public form: fill in, preview live, print or download](docs/screenshots/form.png)
+
+| The editor: place and size fields on the template | Dark mode |
 | --- | --- |
-| ![Editor](docs/screenshots/2-editor.png) | ![Form](docs/screenshots/6-form.png) |
-| Dark mode | Phone |
-| ![Dark mode](docs/screenshots/8-form-dark.png) | ![Phone](docs/screenshots/7-form-mobile.png) |
+| ![Editor](docs/screenshots/editor.png) | ![Dark mode](docs/screenshots/form-dark.png) |
+| Public index with tags and search | On a phone |
+| ![Index](docs/screenshots/list.png) | ![Phone](docs/screenshots/form-mobile.png) |
+
+The screenshots come from a demo instance that `npm run screenshots` builds from scratch.
 
 ## Features
 
@@ -97,6 +101,11 @@ Settings.
 
 ## Deployment
 
+### Printing through CUPS
+
+See "Printers that do not accept PDF" above: `docker-compose.cups.yml` adds a CUPS server with
+its own volume; printers are registered once with `lpadmin` and survive restarts.
+
 ### HTTPS with Caddy
 
 Set `DOMAIN` in `.env` to a hostname that resolves to the server and start with the overlay:
@@ -141,8 +150,27 @@ Enter the printer's IPP URL in Settings. The printer (or CUPS queue) must accept
 
 Keep the `:631` port in the URL and use the printer's IP address rather than its `.local` name:
 mDNS usually does not resolve inside a container, and a DHCP reservation keeps the address stable.
-If the printer answers with IPP status `0x040a` (document format not supported), print through a
-CUPS queue instead. By default only a
+"Test printer" in Settings asks the printer what it is and which document formats it accepts.
+
+#### Printers that do not accept PDF (IPP status 0x040a)
+
+Many home and small-office printers, the Brother MFC-L2700DW among them, only take raster formats
+over IPP and answer a PDF job with `0x040a` (document format not supported). CUPS converts the
+PDF for them. The repository ships a CUPS sidecar:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.cups.yml up -d
+# register the printer once, driverless ("IPP Everywhere"), by IP address:
+docker compose exec cups lpadmin -p Office -E -v ipp://192.168.1.50/ipp/print -m everywhere
+```
+
+Then enter `http://cups:631/printers/Office` as the printer URL in Settings and press "Test
+printer": a CUPS queue always accepts PDF. The CUPS web interface is on port 631 (login from
+`.env`, `CUPSADMIN`/`CUPSPASSWORD`). Without Docker, any CUPS server on the network works the
+same way: point stampfill at `http://cups-host:631/printers/<queue>`.
+
+Other IPP status codes are explained in the error message; the most common besides 0x040a are
+`0x0406` (wrong path in the printer URL) and `0x0506` (the printer is not accepting jobs). By default only a
 logged-in admin sees the server-print button; the setting "Let everyone with a document link use
 this printer" opens it to all users, which only makes sense on a trusted network. The button's
 label is a setting ("Print at home" by default), and each document can disable it.
@@ -155,6 +183,12 @@ the `pdfs/` folder with the templates, and the optional `font.ttf`. Nothing else
 server, so backing up that directory is a complete backup. Browser-remembered field values live in
 each user's browser only. Upgrading is `docker compose pull && docker compose up -d`. The `db.json` format
 is forward compatible; missing settings get their defaults.
+
+### Without Docker
+
+Node.js 22+, a writable data directory and a reverse proxy are all it takes. [docs/deploy-without-docker.md](docs/deploy-without-docker.md)
+walks through Uberspace (supervisord service plus web backend) and a generic systemd unit with
+hardening (`deploy/systemd/`).
 
 ### Health check
 
@@ -196,6 +230,12 @@ download, link sharing, the mobile layout and document deletion. See
 
 `n8n/` holds an earlier n8n workflow that does a fixed version of the same job without the web
 UI; it is kept for reference.
+
+## Design and security
+
+[docs/design.md](docs/design.md) explains how the service is built; the decisions behind it are
+recorded in [docs/adr/](docs/adr/README.md). The security review lives in
+[docs/security.md](docs/security.md).
 
 ## License
 

@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Documentation: design overview (`docs/design.md`), architecture decision records
+  (`docs/adr/`), deployment without Docker on Uberspace or with systemd
+  (`docs/deploy-without-docker.md`, `deploy/systemd/`).
+- Printer diagnostics: "Test printer" in Settings shows the printer's name, state and accepted
+  document formats and says plainly when it does not take PDF; IPP errors come with an explanation
+  (e.g. 0x040a: document format not supported — print through a CUPS queue).
+- CUPS sidecar (`docker-compose.cups.yml`) for printers that only accept raster formats over IPP,
+  with one-command driverless registration; README section on printer setup.
 - Coverage gates: c8 on the server (95% lines, 85% branches) and V8 coverage of the inline page
   scripts from the browser suite (85% per page); a process-level test for startup checks and
   shutdown; a mock printer that can simulate failures.
@@ -41,6 +49,10 @@ All notable changes to this project are documented here. The format follows
   `13/10/2026` or `10/13/2026` (per the field's format) are accepted in fixed values and links.
 
 ### Changed
+- Editor layout: three columns on wide screens (document settings, page, fields), a collapsible
+  "Document settings" section that remembers its state, and a page that stays in view while the
+  field settings scroll.
+- README screenshots are generated from a realistic demo instance (`npm run screenshots`).
 - New date fields default to the YYYY-MM-DD print format in the editor. Stored fields keep their
   format.
 - Interface refresh: new light/dark palette, sticky translucent header with logo, hover and focus

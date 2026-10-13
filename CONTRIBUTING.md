@@ -20,9 +20,9 @@ npm test            # all of the above
 ```
 
 The end-to-end run starts its own instance on port 8099 with a fresh data directory under
-`test-results/` plus a mock IPP printer on port 6310. Screenshots land in
-`test-results/screenshots/`. To refresh the screenshots in the README run the suite with
-`SCREENSHOTS_DIR=docs/screenshots`.
+`test-results/` plus a mock IPP printer on port 6310. Screenshots of the test run land in
+`test-results/screenshots/`. The README screenshots are different: `npm run screenshots` builds a
+demo instance with realistic forms (`scripts/screenshots.js`) and writes `docs/screenshots/`.
 
 ## Coverage
 

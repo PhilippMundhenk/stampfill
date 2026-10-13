@@ -19,6 +19,7 @@ test.describe.configure({ mode: 'serial' });
 /** @type {import('@playwright/test').Page} */ let user;
 /** @type {string[]} */ const errors = [];
 let link = '', docHash = '';
+let dialogAnswer = 'accept'; // what the admin page's confirm() dialogs get; one persistent handler avoids clashing one-shot handlers
 
 const cov = require('./coverage');
 const track = (/** @type {import('@playwright/test').Page} */ p, who) => {
@@ -38,6 +39,7 @@ const settle = async (p, action) => {
 test.beforeAll(async ({ browser: b, baseURL }) => {
   browser = b; fs.mkdirSync(SHOTS, { recursive: true });
   admin = track(await (await b.newContext({ baseURL })).newPage(), 'admin');
+  admin.on('dialog', (d) => (dialogAnswer === 'accept' ? d.accept() : d.dismiss()));
   user = track(await (await b.newContext({ baseURL })).newPage(), 'user');
 });
 test.afterAll(async () => { await admin.context().close(); await user.context().close(); });
@@ -188,11 +190,20 @@ test('admin saves metadata and gets a direct link', async () => {
   link = await admin.locator('input[readonly]').inputValue();
   expect(link).toBe('http://127.0.0.1:8099/d/sample-request');
   await admin.locator('button', { hasText: 'Copy' }).first().click(); await expect(admin.locator('#toast')).toHaveText('Link copied');
+  // document settings collapse (remembered) and the three-column layout on wide screens
+  await admin.locator('details.ed-doc summary').click(); await expect(admin.locator('#slugIn')).toBeHidden();
+  await admin.reload(); await expect(admin.locator('.wrap canvas')).toBeVisible(); await expect(admin.locator('#slugIn')).toBeHidden(); // still collapsed
+  await admin.locator('details.ed-doc summary').click(); await expect(admin.locator('#slugIn')).toBeVisible();
+  await admin.setViewportSize({ width: 1600, height: 900 });
+  await expect.poll(async () => { const d = await admin.locator('.ed-doc').boundingBox(), s = await admin.locator('.ed-stage').boundingBox(); return d && s && d.x < s.x; }).toBe(true); // settings left of the page
+  await admin.setViewportSize({ width: 1320, height: 900 });
+  await expect.poll(async () => { const d = await admin.locator('.ed-doc').boundingBox(), s = await admin.locator('.ed-stage').boundingBox(); return d && s && d.x > s.x; }).toBe(true); // back to two columns
   // unsaved changes: navigating away asks first
   await admin.fill('input[placeholder^="e.g."]', 'school, demo, extra');
-  admin.once('dialog', (d) => d.dismiss()); await admin.click('#nav a:has-text("Documents")');
+  await expect(admin.locator('button.pri')).toHaveText('Save changes'); // dirty, so navigating away must ask
+  dialogAnswer = 'dismiss'; await admin.click('#nav a:has-text("Documents")');
   await expect(admin.locator('.wrap canvas')).toBeVisible(); // stayed
-  admin.once('dialog', (d) => d.accept()); await admin.click('#nav a:has-text("Documents")');
+  dialogAnswer = 'accept'; await admin.click('#nav a:has-text("Documents")');
   await expect(admin.locator('table')).toBeVisible(); // left, change discarded
   await admin.goto('/admin' + docHash);
   // data survives a reload
@@ -203,10 +214,10 @@ test('admin saves metadata and gets a direct link', async () => {
   await expect(admin.locator('#toast')).toHaveText('PDF replaced');
   await expect(admin.locator('.mk')).toHaveCount(10);
   await admin.fill('input[placeholder^="e.g."]', 'school, demo, dirty');
-  admin.once('dialog', (d) => d.dismiss());
+  dialogAnswer = 'dismiss';
   await admin.locator('input[accept="application/pdf,.pdf"]').last().setInputFiles(PDF);
   await expect(admin.locator('button.pri')).toHaveText('Save changes'); // declined: nothing replaced, still dirty
-  admin.once('dialog', (d) => d.accept());
+  dialogAnswer = 'accept';
   await admin.locator('input[accept="application/pdf,.pdf"]').last().setInputFiles(PDF);
   await expect(admin.locator('#toast')).toHaveText('PDF replaced');
   await expect(admin.locator('button.pri')).toHaveText('Saved');
@@ -216,6 +227,9 @@ test('admin saves metadata and gets a direct link', async () => {
 test('admin configures the network printer', async () => {
   await admin.goto('/admin#settings');
   await admin.fill('input[type=url]', 'http://127.0.0.1:6310/printers/Test');
+  await admin.click('text=Test printer');
+  await expect(admin.locator('#ptest')).toContainText('Mock IPP printer — idle');
+  await expect(admin.locator('#ptest')).toContainText('Takes PDF');
   await admin.fill('input[placeholder="Print at home"]', 'Print at school');
   await admin.locator('label.chk input').check();
   await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
@@ -413,7 +427,7 @@ test('admin can switch off network printing and protect the form with a password
 });
 
 test('admin rotates the link and deletes the document', async () => {
-  admin.on('dialog', (d) => d.accept());
+  dialogAnswer = 'accept';
   await admin.goto('/admin' + docHash); await expect(admin.locator('.wrap canvas')).toBeVisible();
   await admin.click('text=Random link');
   await expect(admin.locator('#toast')).toHaveText('New link created');

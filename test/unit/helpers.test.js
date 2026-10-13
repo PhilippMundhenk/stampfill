@@ -139,6 +139,20 @@ test('cleanFields sanitises, defaults and de-duplicates keys', () => {
   assert.equal(app.cleanFields(Array.from({ length: 300 }, (_, i) => ({ label: 'f' + i })), 1).length, 200);
 });
 
+test('ippParse reads attribute groups and multi-valued attributes', () => {
+  const attr = (tag, name, value) => { const n = Buffer.from(name), v = Buffer.isBuffer(value) ? value : Buffer.from(value); const h = Buffer.alloc(3); h[0] = tag; h.writeUInt16BE(n.length, 1); const l = Buffer.alloc(2); l.writeUInt16BE(v.length, 0); return Buffer.concat([h, n, l, v]); };
+  const int = (n) => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+  const res = app.ippParse(Buffer.concat([
+    Buffer.from([2, 0, 0x04, 0x0a]), int(7), Buffer.from([1]), attr(0x47, 'attributes-charset', 'utf-8'),
+    Buffer.from([4]), attr(0x42, 'printer-name', 'Office'), attr(0x23, 'printer-state', int(5)), attr(0x22, 'printer-is-accepting-jobs', Buffer.from([1])),
+    attr(0x49, 'document-format-supported', 'image/urf'), attr(0x49, '', 'image/pwg-raster'), Buffer.from([3]), Buffer.from('trailing document bytes'),
+  ]));
+  assert.equal(res.status, 0x040a);
+  assert.deepEqual(res.attrs['printer-name'], ['Office']); assert.deepEqual(res.attrs['printer-state'], [5]); assert.deepEqual(res.attrs['printer-is-accepting-jobs'], [true]);
+  assert.deepEqual(res.attrs['document-format-supported'], ['image/urf', 'image/pwg-raster']);
+  assert.deepEqual(app.ippParse(Buffer.from([2, 0, 0, 0, 0, 0, 0, 1])).attrs, {}, 'empty response');
+});
+
 test('cleanTags trims, de-duplicates and caps', () => {
   assert.deepEqual(app.cleanTags([' a ', 'b', 'a', '', 3]), ['a', 'b', '3']);
   assert.equal(app.cleanTags(Array.from({ length: 50 }, (_, i) => 't' + i)).length, 20);

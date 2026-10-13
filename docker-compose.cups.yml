@@ -1,0 +1,32 @@
+# Overlay: a CUPS server next to stampfill for printers that do not accept PDF over IPP
+# (most home printers only take raster formats; CUPS converts). Start with:
+#   docker compose -f docker-compose.yml -f docker-compose.cups.yml up -d
+# then register the printer once (driverless "IPP Everywhere"; use the printer's IP, mDNS names do not
+# resolve inside containers):
+#   docker compose exec cups lpadmin -p Office -E -v ipp://192.168.1.50/ipp/print -m everywhere
+# and enter  http://cups:631/printers/Office  as the printer URL in stampfill's Settings.
+# The CUPS web interface is at http://<host>:631 (user "print", password "print" — change CUPSADMIN/CUPSPASSWORD).
+services:
+  cups:
+    image: olbat/cupsd:latest
+    restart: unless-stopped
+    ports:
+      - "631:631"
+    environment:
+      CUPSADMIN: ${CUPSADMIN:-print}
+      CUPSPASSWORD: ${CUPSPASSWORD:-print}
+    volumes:
+      - cups-config:/etc/cups
+    healthcheck:
+      test: ["CMD-SHELL", "lpstat -r | grep -q running"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  stampfill:
+    depends_on:
+      cups:
+        condition: service_started
+
+volumes:
+  cups-config:

@@ -32,6 +32,17 @@ test('healthz answers', async () => {
   assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
 });
 
+test('the inline page scripts parse (they live inside a string, so node --check cannot see them)', async () => {
+  const vm = require('vm');
+  for (const p of ['/', '/admin']) {
+    const html = await (await fetch(base + p)).text();
+    const m = /<script type="module">([\s\S]*?)<\/script>/.exec(html); assert.ok(m, p + ' has a module script');
+    const src = m[1].replace(/^import \* as pdfjs from '[^']+';/m, 'const pdfjs = {};');
+    assert.doesNotThrow(() => new vm.Script(src, { filename: 'page' + p.replace('/', '-') + '.js' }), p + ' script must parse');
+    assert.ok(!/`|\$\{/.test(m[1]), p + ' script must not contain backticks or dollar-brace (String.raw template)');
+  }
+});
+
 test('pages are served with security headers', async () => {
   for (const p of ['/', '/admin', '/d/whatever']) {
     const r = await fetch(base + p); assert.equal(r.status, 200);
@@ -216,9 +227,32 @@ test('new link invalidates the old one; delete removes the PDF', async () => {
   assert.ok(!fs.existsSync(path.join(app.IMAGES, imgName)), 'default images go with the document');
 });
 
+test('the printer can be probed before saving its URL', async () => {
+  assert.equal((await call('POST', '/api/admin/printer/test', { url: 'ftp://nope' })).status, 400);
+  assert.equal((await call('POST', '/api/admin/printer/test', { url: 'http://127.0.0.1:1/printers/x' })).status, 502);
+  let r = await call('POST', '/api/admin/printer/test', { url: ippUrl }); assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.equal(d.name, 'Test'); assert.equal(d.model, 'Mock IPP printer'); assert.equal(d.state, 'idle'); assert.deepEqual(d.reasons, []);
+  assert.deepEqual(d.formats, ['application/pdf', 'image/pwg-raster', 'image/urf']); assert.equal(d.pdf, true);
+  // a raster-only printer, like many home printers over IPP
+  const raster = createMockIpp(path.join(tmp, 'ipp2'), { pdf: false }); await new Promise((ok) => raster.listen(0, '127.0.0.1', ok));
+  try {
+    const rasterUrl = 'http://127.0.0.1:' + raster.address().port + '/ipp/print';
+    r = await call('POST', '/api/admin/printer/test', { url: rasterUrl }); const d2 = await r.json();
+    assert.equal(d2.pdf, false); assert.deepEqual(d2.formats, ['image/urf', 'image/pwg-raster']);
+    await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: rasterUrl, publicPrint: true });
+    const tmpDoc = await (await call('POST', '/api/admin/docs?title=raster-test', SAMPLE)).json(); // the main document is gone by now
+    r = await fetch(base + '/api/d/' + tmpDoc.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });
+    assert.equal(r.status, 502); assert.match((await r.json()).error, /0x040a: document format not supported .* CUPS/);
+    await call('DELETE', '/api/admin/docs/' + tmpDoc.id);
+  } finally { raster.closeAllConnections(); raster.close(); }
+  assert.equal(app.ippStatusText(0x0406), 'IPP 0x0406: not found — check the path of the printer URL');
+  assert.equal(app.ippStatusText(0x0999), 'IPP 0x0999');
+});
+
 test('printer failures are reported, not swallowed', async () => {
   await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', printerUrl: ippUrl, publicPrint: true });
-  const expect = { 'http-error': [502, /HTTP 500/], 'short-answer': [502, /HTTP 200/], 'reject-me': [502, /rejected .*0x040a/], 'no-job-id': [200, null] };
+  const expect = { 'http-error': [502, /HTTP 500/], 'short-answer': [502, /HTTP 200/], 'reject-me': [502, /rejected .*0x040a: document format not supported/], 'no-job-id': [200, null] };
   for (const [title, [status, msg]] of Object.entries(expect)) {
     const d = await (await call('POST', '/api/admin/docs?title=' + title, SAMPLE)).json();
     const r = await fetch(base + '/api/d/' + d.slug + '/print', { method: 'POST', headers: H, body: JSON.stringify({ values: {} }) });

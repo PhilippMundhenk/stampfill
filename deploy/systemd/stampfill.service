@@ -1,0 +1,37 @@
+[Unit]
+Description=stampfill - stamp text onto PDF templates and print
+Documentation=https://github.com/PhilippMundhenk/stampfill
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stampfill
+Group=stampfill
+WorkingDirectory=/opt/stampfill
+EnvironmentFile=/etc/stampfill.env
+ExecStart=/usr/bin/node /opt/stampfill/stampfill.js
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# hardening: the process only needs to read its code and write its data directory
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/stampfill
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
