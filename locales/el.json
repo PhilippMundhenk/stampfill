@@ -192,5 +192,7 @@
  "Drag to reorder": "Σύρετε για αλλαγή σειράς",
  "Move up": "Μετακίνηση πάνω",
  "Move down": "Μετακίνηση κάτω",
- "Image unreadable or too large (at most 8 megapixels)": "Η εικόνα δεν διαβάζεται ή είναι πολύ μεγάλη (έως 8 megapixel)"
+ "Image unreadable or too large (at most 8 megapixels)": "Η εικόνα δεν διαβάζεται ή είναι πολύ μεγάλη (έως 8 megapixel)",
+ "Install as app": "Εγκατάσταση ως εφαρμογή",
+ "Adds this form to your home screen or desktop": "Προσθέτει αυτή τη φόρμα στην αρχική οθόνη ή την επιφάνεια εργασίας"
 }

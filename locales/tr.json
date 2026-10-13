@@ -192,5 +192,7 @@
  "Drag to reorder": "Sıralamak için sürükleyin",
  "Move up": "Yukarı taşı",
  "Move down": "Aşağı taşı",
- "Image unreadable or too large (at most 8 megapixels)": "Resim okunamıyor veya çok büyük (en fazla 8 megapiksel)"
+ "Image unreadable or too large (at most 8 megapixels)": "Resim okunamıyor veya çok büyük (en fazla 8 megapiksel)",
+ "Install as app": "Uygulama olarak yükle",
+ "Adds this form to your home screen or desktop": "Bu formu ana ekrana veya masaüstüne ekler"
 }

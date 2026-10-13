@@ -192,5 +192,7 @@
  "Drag to reorder": "Ziehen, um die Reihenfolge zu ändern",
  "Move up": "Nach oben",
  "Move down": "Nach unten",
- "Image unreadable or too large (at most 8 megapixels)": "Bild nicht lesbar oder zu groß (höchstens 8 Megapixel)"
+ "Image unreadable or too large (at most 8 megapixels)": "Bild nicht lesbar oder zu groß (höchstens 8 Megapixel)",
+ "Install as app": "Als App installieren",
+ "Adds this form to your home screen or desktop": "Legt dieses Formular auf den Startbildschirm oder Desktop"
 }

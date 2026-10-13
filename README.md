@@ -55,6 +55,9 @@ The screenshots come from a demo instance that `npm run screenshots` builds from
 - **Small footprint**: single process, JSON file plus the uploaded PDFs on disk, around 50 MB
   resident memory. Pages and assets are served gzip-compressed from memory.
 - **Light and dark**: follows the system colour scheme, works on phones, respects reduced motion.
+- **Install as an app**: every form is a progressive web app of its own. "Install as app" (or the
+  browser's install option) puts it on the home screen or desktop and opens exactly that form, not
+  the index; the page shell works offline, filling and printing need the server.
 - **Languages**: English, German, Turkish, Arabic (right-to-left), Russian, Ukrainian, Greek and
   Polish. The pages follow the browser language, a switcher in the header remembers a choice, and
   Settings has an instance default. Stamped text in Greek, Cyrillic or accented Latin letters uses

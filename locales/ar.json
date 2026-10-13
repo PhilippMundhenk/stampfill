@@ -192,5 +192,7 @@
  "Drag to reorder": "اسحب لإعادة الترتيب",
  "Move up": "نقل لأعلى",
  "Move down": "نقل لأسفل",
- "Image unreadable or too large (at most 8 megapixels)": "الصورة غير قابلة للقراءة أو كبيرة جدًا (8 ميغابكسل كحد أقصى)"
+ "Image unreadable or too large (at most 8 megapixels)": "الصورة غير قابلة للقراءة أو كبيرة جدًا (8 ميغابكسل كحد أقصى)",
+ "Install as app": "تثبيت كتطبيق",
+ "Adds this form to your home screen or desktop": "يضيف هذا النموذج إلى الشاشة الرئيسية أو سطح المكتب"
 }

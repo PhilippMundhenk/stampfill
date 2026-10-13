@@ -306,6 +306,17 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('.panel label').first()).toHaveText('Full name *');
   await expect(user.locator('input.remember')).not.toBeChecked(); // pictures are not remembered unless asked
   await expect(user.locator('#f_agree')).toBeChecked(); // checkbox from the link
+  // installable as an app that opens this very form
+  await expect(user.locator('link[rel=manifest]')).toHaveAttribute('href', '/d/sample-request/manifest.webmanifest');
+  expect(await user.evaluate(async () => { const r = await fetch(document.querySelector('link[rel=manifest]').href); const m = await r.json(); return [m.start_url, m.scope, m.display]; })).toEqual(['/d/sample-request', '/d/sample-request', 'standalone']);
+  expect(await user.evaluate(async () => { const reg = await navigator.serviceWorker.ready; return reg.active ? reg.active.scriptURL.endsWith('/sw.js') : false; })).toBe(true);
+  // the browser's install offer surfaces as a button (raised by hand here: headless Chromium never offers to install)
+  await expect(user.locator('#installBtn')).toBeHidden();
+  await user.evaluate(() => { const e = new Event('beforeinstallprompt'); /** @type {any} */ (e).prompt = () => { /** @type {any} */ (window).__prompted = true; }; /** @type {any} */ (e).userChoice = Promise.resolve({ outcome: 'accepted' }); window.dispatchEvent(e); });
+  await expect(user.locator('#installBtn')).toBeVisible();
+  await user.click('#installBtn');
+  expect(await user.evaluate(() => /** @type {any} */ (window).__prompted)).toBe(true);
+  await expect(user.locator('#installBtn')).toBeHidden();
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden(); // no signature yet
   await expect(user.locator('.imgbox:has(#f_stamp) .thumb')).toBeVisible(); // the admin's default stamp
   await expect(user.getByText('A default image is provided')).toBeVisible();

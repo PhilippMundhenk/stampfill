@@ -192,5 +192,7 @@
  "Drag to reorder": "Перетягніть, щоб змінити порядок",
  "Move up": "Вгору",
  "Move down": "Вниз",
- "Image unreadable or too large (at most 8 megapixels)": "Зображення нечитабельне або завелике (не більше 8 мегапікселів)"
+ "Image unreadable or too large (at most 8 megapixels)": "Зображення нечитабельне або завелике (не більше 8 мегапікселів)",
+ "Install as app": "Встановити як застосунок",
+ "Adds this form to your home screen or desktop": "Додає цю форму на головний екран або робочий стіл"
 }

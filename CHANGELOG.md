@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Every form can be installed as a progressive web app that opens that form directly: per-document
+  web app manifest with a limited scope, generated icons, an "Install as app" button and a small
+  service worker that keeps the page shell and pdf.js available offline.
+
 ## [1.1.0] - 2026-10-14
 
 ### Security

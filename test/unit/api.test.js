@@ -164,6 +164,23 @@ test('image fields: default image upload, public delivery, render with a data UR
   assert.ok(fs.existsSync(path.join(app.IMAGES, imgName)));
 });
 
+test('each form is installable as its own app: manifest, icons, service worker', async () => {
+  const r = await fetch(base + '/d/' + doc.slug + '/manifest.webmanifest'); assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /application\/manifest\+json/);
+  const m = await r.json();
+  assert.equal(m.name, 'Sample form'); assert.equal(m.start_url, '/d/' + doc.slug); assert.equal(m.scope, '/d/' + doc.slug); assert.equal(m.display, 'standalone');
+  assert.deepEqual(m.icons.map((i) => i.sizes), ['192x192', '512x512']);
+  assert.equal((await fetch(base + '/d/nope/manifest.webmanifest')).status, 404);
+  for (const size of [192, 512, 180]) {
+    const ir = await fetch(base + '/icon-' + size + '.png'); assert.equal(ir.status, 200); assert.equal(ir.headers.get('content-type'), 'image/png');
+    const buf = Buffer.from(await ir.arrayBuffer()); assert.deepEqual(app.imgDims(buf), [size, size]); assert.equal(app.imgType(buf), 'png');
+    const { PDFDocument } = require('pdf-lib'); const pdf = await PDFDocument.create(); const img = await pdf.embedPng(buf); assert.equal(img.width, size, 'the icon decodes');
+  }
+  const sw = await fetch(base + '/sw.js'); assert.equal(sw.status, 200); assert.match(sw.headers.get('content-type'), /javascript/); assert.equal(sw.headers.get('cache-control'), 'no-cache');
+  const swText = await sw.text(); assert.doesNotThrow(() => new (require('vm').Script)(swText), 'the worker parses');
+  const html = await (await fetch(base + '/d/' + doc.slug)).text(); assert.match(html, /theme-color/); assert.match(html, /apple-touch-icon/);
+});
+
 test('public API exposes listed documents and renders with values', async () => {
   const pub = await (await fetch(base + '/api/docs')).json();
   assert.equal(pub.title, 'Forms'); assert.equal(pub.docs.length, 1); assert.equal(pub.docs[0].slug, doc.slug);
@@ -212,6 +229,7 @@ test('a form password locks the public endpoints until unlocked', async () => {
     const r = await fetch(base + '/api/d/' + doc.slug + p, p === '/render' ? { method: 'POST', headers: H, body: '{}' } : {});
     assert.equal(r.status, 401, p + ' is locked');
   }
+  const mf = await (await fetch(base + '/d/' + doc.slug + '/manifest.webmanifest')).json(); assert.equal(mf.name, 'Form', 'a locked form does not reveal its title in the manifest');
   assert.equal((await call('GET', '/api/d/' + doc.slug)).status, 200, 'admins are never locked out');
   let r = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: H, body: JSON.stringify({ password: 'nope' }) }); assert.equal(r.status, 401);
   const sec = await fetch(base + '/api/d/' + doc.slug + '/unlock', { method: 'POST', headers: { ...H, 'X-Forwarded-Proto': 'https' }, body: JSON.stringify({ password: 'open-sesame' }) });

@@ -192,5 +192,7 @@
  "Drag to reorder": "Przeciągnij, aby zmienić kolejność",
  "Move up": "W górę",
  "Move down": "W dół",
- "Image unreadable or too large (at most 8 megapixels)": "Obraz nieczytelny lub za duży (maksymalnie 8 megapikseli)"
+ "Image unreadable or too large (at most 8 megapixels)": "Obraz nieczytelny lub za duży (maksymalnie 8 megapikseli)",
+ "Install as app": "Zainstaluj jako aplikację",
+ "Adds this form to your home screen or desktop": "Dodaje ten formularz do ekranu głównego lub pulpitu"
 }

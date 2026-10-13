@@ -430,6 +430,53 @@ async function ippProbe(url) {
   return { name: first('printer-name'), model: first('printer-make-and-model'), state, reasons: (a['printer-state-reasons'] || []).map(String).filter((x) => x !== 'none'), formats, pdf: formats.includes('application/pdf') };
 }
 
+// ---------------------------------------------------------------- progressive web app: one installable app per form
+// Icons are drawn at startup (a stamp on a blue tile) and encoded as PNG here, so the repository carries no binaries.
+function crc32(buf) { let c, crc = 0xffffffff; for (let n = 0; n < buf.length; n++) { c = (crc ^ buf[n]) & 0xff; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crc = (crc >>> 8) ^ c; } return (crc ^ 0xffffffff) >>> 0; }
+function pngEncode(size, rgba) {
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0); const td = Buffer.concat([Buffer.from(type), data]); const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td), 0); return Buffer.concat([len, td, crc]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(size, 0); ihdr.writeUInt32BE(size, 4); ihdr[8] = 8; ihdr[9] = 6;
+  const raw = Buffer.alloc((size * 4 + 1) * size); for (let y = 0; y < size; y++) { raw[y * (size * 4 + 1)] = 0; rgba.copy(raw, y * (size * 4 + 1) + 1, y * size * 4, (y + 1) * size * 4); }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+}
+function drawIcon(size) { // blue rounded tile, white stamp: base bar, handle, knob
+  const px = Buffer.alloc(size * size * 4), s = size, r = s * 0.22;
+  const inRound = (x, y) => { const cx = Math.min(Math.max(x, r), s - r), cy = Math.min(Math.max(y, r), s - r); return (x - cx) ** 2 + (y - cy) ** 2 <= r * r; };
+  const inRect = (x, y, x0, y0, x1, y1, rr) => { if (x < x0 || x > x1 || y < y0 || y > y1) return false; const cx = Math.min(Math.max(x, x0 + rr), x1 - rr), cy = Math.min(Math.max(y, y0 + rr), y1 - rr); return (x - cx) ** 2 + (y - cy) ** 2 <= rr * rr; };
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const i = (y * s + x) * 4, X = x + 0.5, Y = y + 0.5;
+    if (!inRound(X, Y)) continue;
+    const white = inRect(X, Y, s * 0.22, s * 0.66, s * 0.78, s * 0.78, s * 0.03) || inRect(X, Y, s * 0.28, s * 0.58, s * 0.72, s * 0.70, s * 0.06) || inRect(X, Y, s * 0.44, s * 0.36, s * 0.56, s * 0.62, s * 0.05) || (X - s / 2) ** 2 + (Y - s * 0.32) ** 2 <= (s * 0.11) ** 2;
+    px[i] = white ? 255 : 0x2f; px[i + 1] = white ? 255 : 0x6b; px[i + 2] = white ? 255 : 0xff; px[i + 3] = 255;
+  }
+  return pngEncode(size, px);
+}
+const ICONS = { 192: drawIcon(192), 512: drawIcon(512), 180: drawIcon(180) };
+const SW_JS = `// stampfill service worker: the app shell and pdf.js come from the cache when offline; forms and renders always go to the network
+const SHELL = 'stampfill-shell-v1';
+self.addEventListener('install', (e) => { self.skipWaiting(); e.waitUntil(caches.open(SHELL).then((c) => c.addAll(['/vendor/pdf.mjs', '/vendor/pdf.worker.mjs']).catch(() => {}))); });
+self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== SHELL).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
+self.addEventListener('fetch', (e) => {
+  const u = new URL(e.request.url);
+  if (e.request.method !== 'GET' || u.origin !== location.origin || u.pathname.startsWith('/api/')) return;
+  if (u.pathname.startsWith('/vendor/') || u.pathname.startsWith('/locales/') || /^\\/icon-\\d+\\.png$/.test(u.pathname)) {
+    e.respondWith(caches.open(SHELL).then(async (c) => (await c.match(e.request)) || fetch(e.request).then((r) => { if (r.ok) c.put(e.request, r.clone()); return r; })));
+  } else if (u.pathname === '/' || u.pathname.startsWith('/d/')) { // the page itself: network first, last copy when offline
+    e.respondWith(fetch(e.request).then((r) => { if (r.ok) caches.open(SHELL).then((c) => c.put(e.request, r.clone())); return r; }).catch(() => caches.match(e.request)));
+  }
+});
+`;
+function manifestFor(doc, req) {
+  const name = hasAccess(doc, req) ? doc.title : t0('Form'); // a locked form does not reveal its title here either
+  return {
+    name, short_name: name.slice(0, 30), description: hasAccess(doc, req) ? doc.description : '', lang: db.settings.language || 'en',
+    start_url: '/d/' + doc.slug, scope: '/d/' + doc.slug, id: '/d/' + doc.slug, display: 'standalone', orientation: 'any',
+    background_color: '#f4f5f7', theme_color: '#2f6bff',
+    icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }],
+  };
+}
+const t0 = (s) => s; // server strings stay English; the page translates what it shows
+
 // ---------------------------------------------------------------- static vendor files (pdf.js)
 const MIME = { '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', '.bcmap': 'application/octet-stream', '.png': 'image/png', '.jpg': 'image/jpeg' };
 const sendImage = (res, name) => send(res, 200, fs.readFileSync(path.join(IMAGES, name)), MIME[path.extname(name)], { 'Cache-Control': 'private, max-age=3600' });
@@ -453,6 +500,12 @@ async function route(req, res) {
     if (p === '/' || /^\/d\/[\w-]+$/.test(p)) return sendStatic(req, res, 'public:' + L, withLang(PUBLIC_HTML.html), 'text/html; charset=utf-8', { 'Content-Security-Policy': PUBLIC_HTML.csp });
     if (p === '/admin' || p === '/admin/') return sendStatic(req, res, 'admin:' + L, withLang(ADMIN_HTML.html), 'text/html; charset=utf-8', { 'Content-Security-Policy': ADMIN_HTML.csp });
     if ((a = /^\/locales\/([a-z]{2})\.json$/.exec(p)) && LOCALES[a[1]]) return sendStatic(req, res, 'locale:' + a[1], LOCALES[a[1]], 'application/json; charset=utf-8', { 'Cache-Control': 'public, max-age=3600' });
+    if ((a = /^\/icon-(192|512|180)\.png$/.exec(p))) return send(res, 200, ICONS[a[1]], 'image/png', { 'Cache-Control': 'public, max-age=604800, immutable' });
+    if (p === '/sw.js') return send(res, 200, SW_JS, 'text/javascript; charset=utf-8', { 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });
+    if ((a = /^\/d\/([\w-]+)\/manifest\.webmanifest$/.exec(p))) {
+      const doc = db.docs.find((d) => d.slug === a[1]); if (!doc) throw new HttpErr(404, 'Document not found');
+      return send(res, 200, JSON.stringify(manifestFor(doc, req)), 'application/manifest+json; charset=utf-8');
+    }
     if (p === '/healthz') return json(res, 200, isAdmin(req) ? { ok: true, version: VERSION, docs: db.docs.length } : { ok: true });
     if (p.startsWith('/vendor/')) return vendor(req, res, p.slice(8));
   } else if (req.headers['x-requested-with'] !== 'stampfill') throw new HttpErr(403, 'Forbidden'); // CSRF guard
@@ -633,7 +686,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -796,6 +849,7 @@ function page(title, body, js) { // the inline script is a constant, so the CSP 
   const script = LIB + js, hash = crypto.createHash('sha256').update(script).digest('base64');
   const html = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">' +
     '<link rel="modulepreload" href="/vendor/pdf.mjs"><link rel="preload" href="/vendor/pdf.worker.mjs" as="script" crossorigin>' +
+    '<meta name="theme-color" content="#2f6bff"><link rel="apple-touch-icon" href="/icon-180.png"><link rel="icon" href="/icon-192.png" type="image/png">' +
     '<title>' + title + '</title><style>' + CSS + '</style><style id="pageStyle"></style></head><body>' + body +
     '<main id="app"></main><div id="printArea"></div><div id="toast"></div><script type="module">' + script + '</script></body></html>';
   return { html, csp: csp("'self' 'sha256-" + hash + "' 'wasm-unsafe-eval'") };
@@ -851,6 +905,11 @@ async function formView() {
     app.append(h('h1', {}, t('Document not found')), h('p', { class: 'muted' }, t('This link is not valid any more.'))); return;
   }
   document.title = doc.title; $('#homeT').textContent = doc.siteTitle;
+  // installable as an app that opens exactly this form (manifest per document, scope limited to it)
+  document.head.append(h('link', { rel: 'manifest', href: '/d/' + slug + '/manifest.webmanifest' }), h('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' }), h('meta', { name: 'apple-mobile-web-app-title', content: doc.title }));
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; const b = $('#installBtn'); if (b) b.style.display = ''; });
   // values from the link: only #key=value, which never leaves the browser (a query string would reach server and proxy logs)
   const fromUrl = new URLSearchParams(location.hash.slice(1));
   const LS = 'stampfill:', TTL = 30 * 86400000; // remembered values expire after 30 days
@@ -1029,6 +1088,7 @@ async function formView() {
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
       h('button', { class: 'pri', onclick: guard(browserPrint) }, t('Print')),
+      h('button', { id: 'installBtn', class: 'small', style: installPrompt ? '' : 'display:none', title: t('Adds this form to your home screen or desktop'), onclick: async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; $('#installBtn').style.display = 'none'; } }, t('Install as app')),
       doc.serverPrint && h('button', { onclick: guard(serverPrint) }, doc.printLabel || 'Print at home'),
       h('button', { onclick: guard(download) }, t('Download PDF'))),
     (has('url') || has('browser')) && h('div', { class: 'row', style: 'margin-top:10px' },
