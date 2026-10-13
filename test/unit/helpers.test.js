@@ -24,6 +24,20 @@ test('slugOf makes readable link names', () => {
   assert.equal(app.slugOf('a'.repeat(100)).length, 60);
 });
 
+test('the template cache is bounded and drops the least recently used entry', () => {
+  fs.mkdirSync(path.join(tmp, 'pdfs'), { recursive: true });
+  app.pdfCache.clear();
+  const big = Buffer.alloc(Math.floor(app.PDF_CACHE_MAX / 2) + 1024, 1); // two of these do not fit together
+  for (const id of ['c1', 'c2', 'c3']) fs.writeFileSync(path.join(tmp, 'pdfs', id + '.pdf'), big);
+  app.readTemplate('c1'); app.readTemplate('c2');
+  assert.deepEqual([...app.pdfCache.keys()], ['c2'], 'c1 was evicted to make room');
+  app.readTemplate('c2'); app.readTemplate('c3');
+  assert.deepEqual([...app.pdfCache.keys()], ['c3']);
+  fs.writeFileSync(path.join(tmp, 'pdfs', 'huge.pdf'), Buffer.alloc(app.PDF_CACHE_MAX + 1, 1));
+  assert.equal(app.readTemplate('huge').length, app.PDF_CACHE_MAX + 1); assert.ok(!app.pdfCache.has('huge'), 'oversized templates are read but not cached');
+  app.pdfCache.clear(); for (const id of ['c1', 'c2', 'c3', 'huge']) fs.rmSync(path.join(tmp, 'pdfs', id + '.pdf'));
+});
+
 test('fields keep their order and carry a trimmed group name', () => {
   const out = app.cleanFields([{ label: 'B', group: '  Applicant  ' }, { label: 'A', group: 'x'.repeat(80) }, { label: 'C' }], 1);
   assert.deepEqual(out.map((f) => f.label), ['B', 'A', 'C']);

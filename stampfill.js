@@ -330,8 +330,19 @@ function cleanValues(v) {
   if (v && typeof v === 'object') for (const k of Object.keys(v).slice(0, 300)) out[k] = typeof v[k] === 'string' && v[k].startsWith('data:image/') ? v[k].slice(0, 3e6) : str(v[k], 4000);
   return out;
 }
-const pdfCache = new Map(); // template bytes by document id; invalidated on upload, replace and delete
-function readTemplate(id) { let b = pdfCache.get(id); if (!b) { b = fs.readFileSync(pdfPath(id)); pdfCache.set(id, b); } return b; }
+const pdfCache = new Map(); // template bytes by document id (bounded, least recently used out); invalidated on upload, replace and delete
+const PDF_CACHE_MAX = 64 * 1024 * 1024;
+function readTemplate(id) {
+  let buf = pdfCache.get(id);
+  if (buf) { pdfCache.delete(id); pdfCache.set(id, buf); return buf; } // re-insert: Map keeps insertion order, so the first entry is the oldest
+  buf = fs.readFileSync(pdfPath(id));
+  if (buf.length <= PDF_CACHE_MAX) {
+    let total = buf.length; for (const v of pdfCache.values()) total += v.length;
+    for (const [k, v] of pdfCache) { if (total <= PDF_CACHE_MAX) break; pdfCache.delete(k); total -= v.length; }
+    pdfCache.set(id, buf);
+  }
+  return buf;
+}
 
 // ---------------------------------------------------------------- printing (IPP, RFC 8011)
 // A tiny IPP client: Print-Job for documents, Get-Printer-Attributes to diagnose a printer. Printers that
@@ -602,7 +613,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, pdfCache, readTemplate, PDF_CACHE_MAX, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
