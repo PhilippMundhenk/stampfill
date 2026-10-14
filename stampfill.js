@@ -60,7 +60,7 @@ catch (e) {
   process.exit(1);
 }
 const rid = (n = 9) => crypto.randomBytes(n).toString('base64url');
-const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home', language: 'en', rememberDays: 30 };
+const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home', language: 'en', rememberDays: 30, rememberDefault: true };
 const LANGS = ['en', 'de', 'tr', 'ar', 'ru', 'uk', 'el', 'pl']; // locales/<lang>.json; English is the source language
 const LOCALES = Object.fromEntries(LANGS.filter((l) => l !== 'en').map((l) => [l, fs.readFileSync(path.join(__dirname, 'locales', l + '.json'))]));
 let db = { secret: rid(32), auth: null, settings: { ...DEFAULTS }, docs: [] };
@@ -294,7 +294,7 @@ const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password })
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
   serverPrint: !!db.settings.printerUrl && d.serverPrint !== false && (db.settings.publicPrint || isAdmin(req)), printLabel: db.settings.printButton,
-  rememberDays: db.settings.rememberDays, collapsed: d.collapsed || [], rememberGroups: d.rememberGroups !== false,
+  rememberDays: db.settings.rememberDays, rememberDefault: db.settings.rememberDefault !== false, collapsed: d.collapsed || [], rememberGroups: d.rememberGroups !== false,
   fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, group: f.group, type: f.type, required: f.required, hidden: f.hidden, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
 });
 async function inspectPdf(buf) {
@@ -590,7 +590,7 @@ async function route(req, res) {
       const b = await readJson(req), u = str(b.printerUrl, 500).trim();
       if (u && !/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
       db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint, printButton: str(b.printButton, 40).trim() || DEFAULTS.printButton,
-        language: LANGS.includes(b.language) ? b.language : 'en', rememberDays: Math.round(num(b.rememberDays, 30, 1, 3650)) }; save();
+        language: LANGS.includes(b.language) ? b.language : 'en', rememberDays: Math.round(num(b.rememberDays, 30, 1, 3650)), rememberDefault: b.rememberDefault !== false }; save();
       audit(req, 'settings.update', { printerUrl: u, publicPrint: db.settings.publicPrint });
     }
     if (m === 'GET' || m === 'PUT') return json(res, 200, db.settings);
@@ -785,7 +785,9 @@ details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([o
 .fgroup{padding:5px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);background:var(--bg);border-bottom:1px solid var(--line)}
 h2.fgroup{padding:0;background:none;border:0;margin:18px 0 2px;font-size:12px}
 .fitem.over,.flist .fgroup.over{box-shadow:inset 0 2px 0 var(--acc)}.flist .fgroup{display:flex;align-items:center;gap:8px}.flist .fgroup .gname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flist .fgroup .grip{cursor:grab}.fitem.ing{padding-left:22px}
-.fgrp{border:1px solid var(--line2);border-radius:var(--rs);padding:2px 14px 14px;margin-top:16px;background:var(--grp)}.fgrp h2.fgroup{margin:0}.fgrp.closed{padding-bottom:2px}.fgrp.closed .gbody{display:none}
+.fgrp{border:1px solid var(--line2);border-radius:var(--rs);padding:2px 14px 14px;margin-top:16px;background:var(--grp)}.fgrp h2.fgroup{margin:0;display:flex;align-items:center;gap:8px}.fgrp .gtog{flex:1;min-width:0}.gclear{padding:3px 9px;font-size:12px;flex:none}
+.rembox{margin-top:18px;padding:12px 14px;border:1px dashed var(--line2);border-radius:var(--rs)}.rembox .days{margin-top:8px;font-size:13px;color:var(--mut)}.rembox input[type=number]{width:84px;padding:5px 8px}.norem .hint.rem{display:none}
+.datef{display:flex;gap:6px;position:relative}.datef input[type=text]{flex:1;min-width:0}.datef .cal{flex:none;padding:0 10px;display:inline-flex;align-items:center}.datef .datepick{position:absolute;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0;padding:0;margin:0}.fgrp.closed{padding-bottom:2px}.fgrp.closed .gbody{display:none}
 .gtog{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:9px;width:100%;padding:10px 0;font:inherit;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
 .gtog:hover{color:var(--ink)}.gtog:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
 .gtog::before{content:'';flex:none;width:7px;height:7px;border-right:1.7px solid currentColor;border-bottom:1.7px solid currentColor;transform:translateY(-2px) rotate(45deg);transition:transform .15s}
@@ -840,6 +842,25 @@ function h(tag, attrs, ...kids) {
   }
   for (const c of kids.flat()) if (c != null && c !== false && c !== '') e.append(c.nodeType ? c : String(c));
   return e;
+}
+// ---- dates shown in the interface follow the language; values are ISO (YYYY-MM-DD) everywhere else
+const UIDATE = { en: 'YYYY-MM-DD', de: 'DD.MM.YYYY', tr: 'DD.MM.YYYY', ar: 'DD/MM/YYYY', ru: 'DD.MM.YYYY', uk: 'DD.MM.YYYY', el: 'DD/MM/YYYY', pl: 'DD.MM.YYYY' }[LANG] || 'YYYY-MM-DD';
+const fmtUi = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? UIDATE.replace('YYYY', m[1]).replace('MM', m[2]).replace('DD', m[3]) : (iso || ''); };
+const parseUi = s => { // the language's order of day, month and year; ISO is always accepted; anything else is passed on as typed
+  const raw = String(s).trim(), p = raw.split(/[./\-\s]+/).filter(Boolean); if (p.length !== 3 || p.some(x => !/^\d+$/.test(x))) return raw;
+  let [a, b, c] = p, y, mo, d; if (a.length === 4) { y = a; mo = b; d = c; } else if (UIDATE.startsWith('MM')) { mo = a; d = b; y = c; } else { d = a; mo = b; y = c; }
+  if (y.length === 2) y = (+y < 50 ? '20' : '19') + y; if (y.length !== 4 || +mo < 1 || +mo > 12 || +d < 1 || +d > 31) return raw;
+  return y + '-' + mo.padStart(2, '0') + '-' + d.padStart(2, '0');
+};
+function dateField(iso, id) { // text in the language's format plus the browser's calendar behind a button; .input carries the text, .value the ISO date
+  const input = h('input', { type: 'text', id, inputMode: 'numeric', placeholder: UIDATE, autocomplete: 'off', value: fmtUi(iso) });
+  const pick = h('input', { type: 'date', tabIndex: -1, class: 'datepick', 'aria-hidden': 'true' });
+  pick.addEventListener('change', () => { if (pick.value) { input.value = fmtUi(pick.value); input.dispatchEvent(new Event('input', { bubbles: true })); } });
+  const btn = h('button', { type: 'button', class: 'cal', title: t('Pick a date'), onclick: () => { const v = parseUi(input.value); pick.value = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ''; try { pick.showPicker(); } catch (e) { pick.click(); } } });
+  btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
+  input.addEventListener('change', () => { const v = parseUi(input.value); if (/^\d{4}-\d{2}-\d{2}$/.test(v)) input.value = fmtUi(v); }); // tidy up what was typed
+  const el = h('div', { class: 'datef' }, input, btn, pick);
+  return { el, input, get value() { return parseUi(input.value); }, set value(v) { input.value = fmtUi(v); } };
 }
 async function api(method, url, body, raw) {
   const o = { method, headers: { 'X-Requested-With': 'stampfill' }, credentials: 'same-origin' };
@@ -953,7 +974,10 @@ async function formView() {
   }
   // values from the link: only #key=value, which never leaves the browser (a query string would reach server and proxy logs)
   const fromUrl = new URLSearchParams(location.hash.slice(1));
-  const LS = 'stampfill:', DAYS = doc.rememberDays || 30, TTL = DAYS * 86400000; // remembered values expire after the instance's number of days
+  const LS = 'stampfill:', lsGet = k => { try { return localStorage.getItem(LS + k); } catch (e) { return null; } }, lsSet = (k, v) => { try { localStorage.setItem(LS + k, v); } catch (e) {} };
+  const DEF_DAYS = doc.rememberDays || 30; // the visitor's own choice of switch and days wins over the instance defaults
+  let DAYS = Math.min(3650, Math.max(1, Math.round(+lsGet('days')) || DEF_DAYS)), TTL = DAYS * 86400000;
+  let REMEMBER = lsGet('remember') == null ? doc.rememberDefault !== false : lsGet('remember') === '1';
   const IMG = t => t === 'image' || t === 'signature';
   const store = {
     get(k) {
@@ -963,16 +987,16 @@ async function formView() {
         return raw;
       } catch (e) { return null; }
     },
-    set(k, v) { try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, JSON.stringify({ v, t: Date.now() })); } catch (e) {} },
+    set(k, v) { if (!REMEMBER && v !== '') return; try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, JSON.stringify({ v, t: Date.now() })); } catch (e) {} },
   };
   try { // sweep: remembered values of other forms expire too, even if those forms are never opened again
-    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith(LS) && k !== LS + 'lang' && k !== LS + 'docOpen') store.get(k.slice(LS.length)); }
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith(LS) && k !== LS + 'lang' && k !== LS + 'docOpen' && k !== LS + 'days' && k !== LS + 'remember') store.get(k.slice(LS.length)); }
   } catch (e) { /* storage unavailable */ }
   const inputs = {}, rows = {};
-  const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
-  const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
+  const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : f.type === 'date' ? parseUi(inputs[f.key].value) : inputs[f.key].value;
+  const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? fmtUi(toIso(v)) : v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
-  const HINT = { browser: t('Remembered on this device for {n} days').replace('{n}', DAYS), url: t('Can be carried in a link'), instance: '', today: t("Today's date") };
+  const HINT = { browser: t('Remembered on this device'), url: t('Can be carried in a link'), instance: '', today: t("Today's date") };
   const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const toIso = v => { const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(String(v).trim()); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : v; };
 
@@ -983,22 +1007,23 @@ async function formView() {
     const sec = h('section', { class: 'fgrp' + ((g in gmem ? gmem[g] : doc.collapsed.includes(g)) ? ' closed' : '') }), body = h('div', { class: 'gbody' });
     const tog = h('button', { type: 'button', class: 'gtog', onclick: () => { const closed = sec.classList.toggle('closed'); tog.setAttribute('aria-expanded', String(!closed)); if (doc.rememberGroups) { gmem[g] = closed; store.set('groups:' + slug, gmem); } } }, g);
     tog.setAttribute('aria-expanded', String(!sec.classList.contains('closed')));
-    sec.append(h('h2', { class: 'fgroup' }, tog), body); form.append(sec); return body;
+    sec.append(h('h2', { class: 'fgroup' }, tog, h('button', { type: 'button', class: 'small gclear', title: t('Clear all fields in this group'), onclick: () => clearGroup(g) }, t('Clear'))), body); form.append(sec); return body;
   };
   let box = form, boxGroup = '';
   const place = f => { if (f.hidden) return box; const g = f.group || ''; if (g !== boxGroup) { boxGroup = g; box = g ? section(g) : form; } return box; }; // hidden fields never open a group
   for (const f of doc.fields) {
     const at = place(f);
     if (IMG(f.type)) { at.append(rows[f.key] = imageRow(f)); continue; }
-    const inp = inputs[f.key] = f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : f.type === 'date' ? 'date' : 'text' });
+    const df = f.type === 'date' && dateField('', 'f_' + f.key);
+    const inp = inputs[f.key] = df ? df.input : f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : 'text' });
     inp.id = 'f_' + f.key;
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
     put(f, fromUrl.has(f.key) ? fromUrl.get(f.key) : saved != null ? saved : f.prefill === 'instance' ? f.value : f.prefill === 'today' ? today() : '');
     inp.addEventListener('input', () => { if (f.prefill === 'browser') store.set(f.key, get(f)); rows[f.key].classList.remove('bad'); schedule(); });
     const name = f.label + (f.required ? ' *' : '');
     rows[f.key] = f.type === 'checkbox'
-      ? h('div', {}, h('label', { class: 'chk', style: 'margin-top:12px' }, inp, name), HINT[f.prefill] && h('div', { class: 'hint' }, HINT[f.prefill]))
-      : h('div', {}, h('label', { htmlFor: inp.id }, name), inp, HINT[f.prefill] && h('div', { class: 'hint' }, HINT[f.prefill]));
+      ? h('div', {}, h('label', { class: 'chk', style: 'margin-top:12px' }, inp, name), HINT[f.prefill] && h('div', { class: 'hint' + (f.prefill === 'browser' ? ' rem' : '') }, HINT[f.prefill]))
+      : h('div', {}, h('label', { htmlFor: inp.id }, name), df ? df.el : inp, HINT[f.prefill] && h('div', { class: 'hint' + (f.prefill === 'browser' ? ' rem' : '') }, HINT[f.prefill]));
     at.append(rows[f.key]);
   }
   for (const f of doc.fields) if (f.hidden && rows[f.key]) rows[f.key].style.display = 'none'; // hidden fields keep their value and are still printed
@@ -1013,16 +1038,13 @@ async function formView() {
     const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? t('Replace image') : t('Choose image'); };
     st.set = v => { st.value = v || ''; show(); };
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
-    // pictures and signatures are only remembered when the user says so: shared computers must not hand them to the next person
-    const rem = st.rem = f.prefill === 'browser' ? h('input', { type: 'checkbox', class: 'remember', checked: !!saved }) : null;
-    const remember = () => { if (rem) store.set(f.key, rem.checked ? st.value : ''); };
-    if (rem) rem.addEventListener('change', remember);
+    const remember = () => { if (f.prefill === 'browser') store.set(f.key, st.value); }; // like every other field: under the one switch on the form
     const changed = () => { remember(); rows[f.key].classList.remove('bad'); schedule(); };
     file.addEventListener('change', async () => { const fl = file.files[0]; file.value = ''; if (!fl) return; try { st.set(await imageData(fl, 1200)); changed(); } catch (e) { fail(e); } });
     st.set(saved || '');
-    const hint = f.prefill === 'instance' && f.value ? t('A default image is provided; you can replace it') : f.prefill === 'browser' ? '' : HINT[f.prefill];
+    const hint = f.prefill === 'instance' && f.value ? t('A default image is provided; you can replace it') : HINT[f.prefill];
     return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, draw, pick, clear, file)),
-      rem && h('label', { class: 'chk small', style: 'margin-top:6px' }, rem, t('Remember on this device ({n} days)').replace('{n}', DAYS)), hint && h('div', { class: 'hint' }, hint));
+      hint && h('div', { class: 'hint' + (f.prefill === 'browser' ? ' rem' : '') }, hint));
   }
   // a drawing pad for signatures: pointer and touch, smoothed strokes, trimmed to the ink with a transparent background
   function sigPad(done) {
@@ -1128,20 +1150,33 @@ async function formView() {
     doc.fields.filter(f => f.prefill === 'url' && get(f)).forEach(f => p.set(f.key, get(f)));
     copyText(location.origin + location.pathname + (p.toString() ? '#' + p.toString() : ''));
   }
-  function forget() {
-    doc.fields.filter(f => f.prefill === 'browser').forEach(f => { store.set(f.key, ''); put(f, ''); if (inputs[f.key].rem) inputs[f.key].rem.checked = false; });
-    schedule(); toast(t('Saved values removed from this browser'));
+  function clearGroup(g) { // back to the defaults: fixed values and today's date return, everything typed or drawn goes, also from this browser's memory
+    for (const f of doc.fields) { if (f.group !== g || f.hidden) continue; put(f, IMG(f.type) ? '' : f.prefill === 'instance' ? f.value : f.prefill === 'today' ? today() : ''); if (f.prefill === 'browser') store.set(f.key, ''); rows[f.key].classList.remove('bad'); }
+    schedule();
   }
   const guard = fn => async e => { const b = e.currentTarget; b.disabled = true; try { await fn(); } catch (err) { fail(err); } b.disabled = false; };
   const has = mode => doc.fields.some(f => f.prefill === mode);
+  // one switch for everything the form remembers on this device, pictures included; the number of days is the visitor's to change
+  const remChk = h('input', { type: 'checkbox', checked: REMEMBER }), daysIn = h('input', { type: 'number', min: 1, max: 3650, step: 1, value: DAYS });
+  const browserFields = () => doc.fields.filter(f => f.prefill === 'browser');
+  remChk.addEventListener('change', () => {
+    REMEMBER = remChk.checked; lsSet('remember', REMEMBER ? '1' : '0'); form.classList.toggle('norem', !REMEMBER);
+    if (REMEMBER) browserFields().forEach(f => store.set(f.key, get(f))); else { browserFields().forEach(f => store.set(f.key, '')); toast(t('Saved values removed from this browser')); }
+  });
+  daysIn.addEventListener('change', () => { DAYS = Math.min(3650, Math.max(1, Math.round(+daysIn.value) || DEF_DAYS)); daysIn.value = DAYS; TTL = DAYS * 86400000; lsSet('days', String(DAYS)); });
+  form.classList.toggle('norem', !REMEMBER);
+  const [daysBefore, daysAfter] = t('Keep for {n} days').split('{n}');
+  if (has('browser')) form.append(h('div', { class: 'rembox' },
+    h('label', { class: 'chk' }, remChk, t('Remember my entries on this device')),
+    h('label', { class: 'chk days' }, daysBefore.trim(), daysIn, daysAfter.trim()),
+    h('div', { class: 'hint' }, t('Applies to the marked fields, including pictures. Switching it off removes what is saved here.'))));
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
       h('button', { class: 'pri', onclick: guard(browserPrint) }, t('Print')),
       doc.serverPrint && h('button', { onclick: guard(serverPrint) }, doc.printLabel || 'Print at home'),
       h('button', { onclick: guard(download) }, t('Download PDF'))),
-    (has('url') || has('browser')) && h('div', { class: 'row', style: 'margin-top:10px' },
-      has('url') && h('button', { class: 'small', onclick: shareLink, title: t('Copies a link that opens this form with the marked fields filled in') }, t('Copy link with values')),
-      has('browser') && h('button', { class: 'small', onclick: forget }, t('Forget saved values')))));
+    has('url') && h('div', { class: 'row', style: 'margin-top:10px' },
+      h('button', { class: 'small', onclick: shareLink, title: t('Copies a link that opens this form with the marked fields filled in') }, t('Copy link with values')))));
   app.append(h('h1', {}, doc.title), doc.description && h('p', { class: 'muted', style: 'margin-top:-8px' }, doc.description), h('div', { class: 'split' }, form, pv));
   await refresh();
 }
@@ -1218,14 +1253,16 @@ async function settingsView() {
   const pub = h('input', { type: 'checkbox', checked: s.publicPrint }), pbtn = h('input', { type: 'text', value: s.printButton, placeholder: 'Print at home', maxLength: 40 });
   const ptest = h('div', { class: 'hint', id: 'ptest' });
   const remDays = h('input', { type: 'number', id: 'remDays', min: 1, max: 3650, step: 1, value: s.rememberDays || 30, style: 'width:140px' });
+  const remDef = h('input', { type: 'checkbox', id: 'remDef', checked: s.rememberDefault !== false });
   const langSel = h('select', { id: 'defLang' }, Object.entries(LANGS).map(([k, n]) => h('option', { value: k, selected: (s.language || 'en') === k }, n)));
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nxt = h('input', { type: 'password', autocomplete: 'new-password' });
   app.append(h('h1', {}, t('Settings')), h('div', { class: 'panel', style: 'max-width:560px' },
     h('label', {}, t('Site title')), title,
     h('label', {}, t('Default language')), langSel,
     h('div', { class: 'hint' }, t('Used when a visitor\'s browser language is not available. Everyone can switch languages in the header.')),
+    h('label', { class: 'chk', style: 'margin-top:12px' }, remDef, t('Remember entries on the device by default (visitors can switch it off on the form)')),
     h('label', {}, t('Days remembered values are kept in the browser')), remDays,
-    h('div', { class: 'hint' }, t('Values a form remembers on a device expire after this many days; 30 by default.')),
+    h('div', { class: 'hint' }, t('Default for how long a form keeps remembered values on a device; visitors can change the number on the form.')),
     h('label', {}, t('Network printer (IPP / CUPS URL, optional)')), h('div', { class: 'row' }, h('div', { class: 'grow' }, purl), h('button', { onclick: async e => {
       const b = e.currentTarget; b.disabled = true; ptest.className = 'hint'; ptest.textContent = t('Asking the printer…');
       try {
@@ -1239,7 +1276,7 @@ async function settingsView() {
     h('div', { class: 'hint' }, t('Adds a button to every form that prints on this printer from the server. The printer must accept PDF; a CUPS queue converts for printers that do not. Each document can switch the button off.')),
     h('label', {}, t('Label of that button')), pbtn,
     h('label', { class: 'chk', style: 'margin-top:12px' }, pub, t('Let everyone with a document link use this printer (otherwise only while logged in as admin)')),
-    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value, language: langSel.value, rememberDays: remDays.value }); toast(t('Saved')); } catch (e) { fail(e); } } }, t('Save settings')))),
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value, language: langSel.value, rememberDays: remDays.value, rememberDefault: remDef.checked }); toast(t('Saved')); } catch (e) { fail(e); } } }, t('Save settings')))),
     h('h2', {}, t('Sessions')),
     h('div', { class: 'panel', style: 'max-width:560px' },
       h('p', { class: 'muted small', style: 'margin:0 0 10px' }, t('Admin sessions last 12 hours of inactivity. Signing out everywhere also closes every unlocked form in every browser.')),
@@ -1446,7 +1483,7 @@ async function editView(id) {
         : f.type !== 'checkbox' && h('div', {}, h('label', {}, t('Wrap width in pt (0 = no wrapping)')), numIn('maxWidth', 1, 0), h('div', { class: 'hint' }, t('Or drag the handle at the bottom-right corner of the marker.'))),
       fixed && h('div', {}, h('label', {}, t('Text (printed as is, users cannot change it)')), bind(h('textarea', { rows: 3, value: f.value, placeholder: t('e.g. a footer note or an office address') }), 'value', null, flist)),
       !fixed && h('label', {}, t('Prefill')), !fixed && sel2('prefill', preFor(f.type)),
-      f.prefill === 'instance' && !isImg && h('div', {}, h('label', {}, t('Fixed value')), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : bind(h('input', { type: f.type === 'date' ? 'date' : 'text', value: f.value, placeholder: f.type === 'checkbox' ? t('1 = ticked') : '' }), 'value')),
+      f.prefill === 'instance' && !isImg && h('div', {}, h('label', {}, t('Fixed value')), f.type === 'textarea' ? bind(h('textarea', { rows: 2, value: f.value }), 'value') : f.type === 'date' ? (() => { const df = dateField(f.value); bind(df.input, 'value', () => df.value); return df.el; })() : bind(h('input', { type: 'text', value: f.value, placeholder: f.type === 'checkbox' ? t('1 = ticked') : '' }), 'value')),
       f.prefill === 'instance' && isImg && h('div', {}, h('label', {}, t('Default image (PNG or JPEG)')),
         h('div', { class: 'imgbox' }, f.value && h('img', { class: 'thumb', alt: '', src: '/api/admin/images/' + f.value }), h('button', { class: 'small', onclick: () => imgPick.click() }, f.value ? t('Replace image') : t('Upload image')), imgPick),
         h('div', { class: 'hint' }, t('Printed unless the user picks another image on the form. For an image nobody should replace, put it into the PDF template itself.'))),

@@ -60,7 +60,6 @@
  "Fixed text (not editable)": "Фиксированный текст (не редактируется)",
  "Fixed value": "Фиксированное значение",
  "Fixed value (this instance)": "Фиксированное значение (этот экземпляр)",
- "Forget saved values": "Забыть сохранённые значения",
  "Form password (optional)": "Пароль формы (необязательно)",
  "Forms admin": "Управление формами",
  "From link (URL)": "Из ссылки (URL)",
@@ -112,9 +111,7 @@
  "Printer": "Принтер",
  "Public list": "Открытый список",
  "Random link": "Случайная ссылка",
- "Remember on this device ({n} days)": "Запомнить на этом устройстве ({n} дней)",
  "Remember per user (browser)": "Запоминать для пользователя (браузер)",
- "Remembered on this device for {n} days": "Запоминается на этом устройстве на {n} дней",
  "Remove": "Удалить",
  "Remove field": "Удалить поле",
  "Replace image": "Заменить изображение",
@@ -210,5 +207,12 @@
  "Remember in the browser which groups a visitor opened or closed": "Запоминать в браузере, какие группы посетитель открыл или закрыл",
  "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Группы, закрытые в списке полей, на форме изначально свёрнуты. Без этой настройки каждый визит начинается так.",
  "Days remembered values are kept in the browser": "Сколько дней запомненные значения хранятся в браузере",
- "Values a form remembers on a device expire after this many days; 30 by default.": "Значения, которые форма запоминает на устройстве, удаляются через столько дней; по умолчанию 30."
+ "Remembered on this device": "Запоминается на этом устройстве",
+ "Remember my entries on this device": "Запоминать мои данные на этом устройстве",
+ "Keep for {n} days": "Хранить {n} дней",
+ "Applies to the marked fields, including pictures. Switching it off removes what is saved here.": "Относится к отмеченным полям, включая изображения. При отключении сохранённое здесь удаляется.",
+ "Remember entries on the device by default (visitors can switch it off on the form)": "Запоминать данные на устройстве по умолчанию (посетители могут отключить это на форме)",
+ "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Значение по умолчанию, как долго форма хранит запомненные данные на устройстве; посетители могут изменить число на форме.",
+ "Pick a date": "Выбрать дату",
+ "Clear all fields in this group": "Очистить все поля этой группы"
 }

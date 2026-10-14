@@ -60,7 +60,6 @@
  "Fixed text (not editable)": "Фіксований текст (не редагується)",
  "Fixed value": "Фіксоване значення",
  "Fixed value (this instance)": "Фіксоване значення (цей екземпляр)",
- "Forget saved values": "Забути збережені значення",
  "Form password (optional)": "Пароль форми (необов'язково)",
  "Forms admin": "Керування формами",
  "From link (URL)": "З посилання (URL)",
@@ -112,9 +111,7 @@
  "Printer": "Принтер",
  "Public list": "Відкритий список",
  "Random link": "Випадкове посилання",
- "Remember on this device ({n} days)": "Запам'ятати на цьому пристрої ({n} днів)",
  "Remember per user (browser)": "Запам'ятовувати для користувача (браузер)",
- "Remembered on this device for {n} days": "Запам'ятовується на цьому пристрої на {n} днів",
  "Remove": "Видалити",
  "Remove field": "Видалити поле",
  "Replace image": "Замінити зображення",
@@ -210,5 +207,12 @@
  "Remember in the browser which groups a visitor opened or closed": "Запам’ятовувати в браузері, які групи відвідувач відкрив або закрив",
  "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Групи, закриті в списку полів, на формі спочатку згорнуті. Без цього налаштування кожен візит починається так.",
  "Days remembered values are kept in the browser": "Скільки днів запам’ятовані значення зберігаються в браузері",
- "Values a form remembers on a device expire after this many days; 30 by default.": "Значення, які форма запам’ятовує на пристрої, видаляються через стільки днів; типово 30."
+ "Remembered on this device": "Запам’ятовується на цьому пристрої",
+ "Remember my entries on this device": "Запам’ятовувати мої дані на цьому пристрої",
+ "Keep for {n} days": "Зберігати {n} днів",
+ "Applies to the marked fields, including pictures. Switching it off removes what is saved here.": "Стосується позначених полів, зокрема зображень. Вимкнення видаляє збережене тут.",
+ "Remember entries on the device by default (visitors can switch it off on the form)": "Запам’ятовувати дані на пристрої типово (відвідувачі можуть вимкнути це на формі)",
+ "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Типове значення, як довго форма зберігає запам’ятовані дані на пристрої; відвідувачі можуть змінити число на формі.",
+ "Pick a date": "Вибрати дату",
+ "Clear all fields in this group": "Очистити всі поля цієї групи"
 }

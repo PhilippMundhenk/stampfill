@@ -91,8 +91,11 @@ jobs capped at 5 copies, and request header and body timeouts.
 "Remember per user" is the convenience the service is built around, and a design decision
 ([ADR 0006](adr/0006-prefill-in-the-browser.md)) keeps that data out of the server. On a shared
 computer it was still handed to the next person. Fixed: pictures and signatures are only
-remembered after the user ticks "Remember on this device", everything remembered expires after
-30 days by default (a setting), the form says so next to each remembered field, and "Forget saved values" clears it all.
+remembered under the same switch as text: "Remember my entries on this device" sits on every form
+that remembers anything, starts on or off as the instance setting says, and switching it off removes
+everything saved there. Remembered values expire after 30 days by default; the instance sets the
+default and the visitor can change the number next to the switch. The form marks each remembered
+field, and every group has a "Clear" button.
 
 ### 6 and 7. Passwords and sessions (medium, #29, #30)
 
@@ -186,7 +189,7 @@ requesting client's own cookie flags and is harmless.
 - The data directory is a secret: it holds the signing secret and password hashes next to the
   templates. Back it up like one.
 - `audit.log` grows without bound; rotate it with the host's tools.
-- Shared computers: tell users about "Forget saved values", or set the fields they fill to no
+- Shared computers: switch "Remember entries on the device by default" off in Settings, or set the fields they fill to no
   prefill.
 
 ## Re-running the review

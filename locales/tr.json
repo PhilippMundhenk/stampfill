@@ -60,7 +60,6 @@
  "Fixed text (not editable)": "Sabit metin (düzenlenemez)",
  "Fixed value": "Sabit değer",
  "Fixed value (this instance)": "Sabit değer (bu kurulum)",
- "Forget saved values": "Kaydedilen değerleri unut",
  "Form password (optional)": "Form parolası (isteğe bağlı)",
  "Forms admin": "Form yönetimi",
  "From link (URL)": "Bağlantıdan (URL)",
@@ -112,9 +111,7 @@
  "Printer": "Yazıcı",
  "Public list": "Genel liste",
  "Random link": "Rastgele bağlantı",
- "Remember on this device ({n} days)": "Bu cihazda hatırla ({n} gün)",
  "Remember per user (browser)": "Kullanıcı başına hatırla (tarayıcı)",
- "Remembered on this device for {n} days": "Bu cihazda {n} gün hatırlanır",
  "Remove": "Kaldır",
  "Remove field": "Alanı kaldır",
  "Replace image": "Resmi değiştir",
@@ -210,5 +207,12 @@
  "Remember in the browser which groups a visitor opened or closed": "Ziyaretçinin hangi grupları açıp kapattığını tarayıcıda hatırla",
  "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Alan listesinde kapatılan gruplar formda kapalı olarak başlar. Bu ayar olmadan her ziyaret böyle başlar.",
  "Days remembered values are kept in the browser": "Hatırlanan değerlerin tarayıcıda tutulduğu gün sayısı",
- "Values a form remembers on a device expire after this many days; 30 by default.": "Bir formun cihazda hatırladığı değerler bu kadar gün sonra silinir; varsayılan 30."
+ "Remembered on this device": "Bu cihazda hatırlanır",
+ "Remember my entries on this device": "Girdilerimi bu cihazda hatırla",
+ "Keep for {n} days": "{n} gün sakla",
+ "Applies to the marked fields, including pictures. Switching it off removes what is saved here.": "İşaretli alanlar için geçerlidir, resimler dahil. Kapatıldığında burada kaydedilenler silinir.",
+ "Remember entries on the device by default (visitors can switch it off on the form)": "Girdileri varsayılan olarak cihazda hatırla (ziyaretçiler formda kapatabilir)",
+ "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Bir formun hatırlanan değerleri cihazda ne kadar tutacağının varsayılanı; ziyaretçiler sayıyı formda değiştirebilir.",
+ "Pick a date": "Tarih seç",
+ "Clear all fields in this group": "Bu gruptaki tüm alanları temizle"
 }

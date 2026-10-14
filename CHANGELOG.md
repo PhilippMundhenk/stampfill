@@ -27,6 +27,15 @@ All notable changes to this project are documented here. The format follows
   missing. (#59, #60)
 - The number of days that remembered values stay in a visitor's browser is a setting (30 by
   default); the hints on the form show the configured value. (#61)
+- One switch on the form, "Remember my entries on this device", covers every remembered field,
+  pictures and signatures included, instead of automatic text fields and a checkbox per picture.
+  The number of days sits next to it and is the visitor's to change; Settings holds the defaults
+  for both. Switching it off removes what was saved; "Forget saved values" is gone. (#62)
+- Dates in the form and in the editor follow the chosen language (English: YYYY-MM-DD, German:
+  DD.MM.YYYY, and so on) instead of the browser's locale; a calendar button still opens the
+  browser's date picker. (#63)
+- Every group on the form has a "Clear" button that resets all of its fields, including what the
+  browser remembered for them. (#64)
 - The README is a short overview again; deployment, printing and the screenshots moved to
   `docs/deploy.md`, `docs/printing.md` and `docs/screenshots.md`. (#58)
 

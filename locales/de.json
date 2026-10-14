@@ -60,7 +60,6 @@
  "Fixed text (not editable)": "Fester Text (nicht bearbeitbar)",
  "Fixed value": "Fester Wert",
  "Fixed value (this instance)": "Fester Wert (diese Instanz)",
- "Forget saved values": "Gespeicherte Werte vergessen",
  "Form password (optional)": "Formular-Passwort (optional)",
  "Forms admin": "Formulare – Verwaltung",
  "From link (URL)": "Aus dem Link (URL)",
@@ -112,9 +111,7 @@
  "Printer": "Drucker",
  "Public list": "Öffentliche Liste",
  "Random link": "Zufälliger Link",
- "Remember on this device ({n} days)": "Auf diesem Gerät merken ({n} Tage)",
  "Remember per user (browser)": "Pro Nutzer merken (Browser)",
- "Remembered on this device for {n} days": "Auf diesem Gerät {n} Tage gemerkt",
  "Remove": "Entfernen",
  "Remove field": "Feld entfernen",
  "Replace image": "Bild ersetzen",
@@ -210,5 +207,12 @@
  "Remember in the browser which groups a visitor opened or closed": "Im Browser merken, welche Gruppen ein Besucher geöffnet oder geschlossen hat",
  "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "In der Feldliste geschlossene Gruppen sind auf dem Formular zunächst geschlossen. Ohne diese Einstellung beginnt jeder Besuch so.",
  "Days remembered values are kept in the browser": "Tage, die gemerkte Werte im Browser bleiben",
- "Values a form remembers on a device expire after this many days; 30 by default.": "Werte, die ein Formular auf einem Gerät merkt, verfallen nach so vielen Tagen; standardmäßig 30."
+ "Remembered on this device": "Auf diesem Gerät gemerkt",
+ "Remember my entries on this device": "Meine Eingaben auf diesem Gerät merken",
+ "Keep for {n} days": "Für {n} Tage behalten",
+ "Applies to the marked fields, including pictures. Switching it off removes what is saved here.": "Gilt für die markierten Felder, auch Bilder. Beim Ausschalten wird das hier Gespeicherte entfernt.",
+ "Remember entries on the device by default (visitors can switch it off on the form)": "Eingaben standardmäßig auf dem Gerät merken (Besucher können es auf dem Formular ausschalten)",
+ "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Vorgabe, wie lange ein Formular gemerkte Werte auf einem Gerät behält; Besucher können die Zahl auf dem Formular ändern.",
+ "Pick a date": "Datum wählen",
+ "Clear all fields in this group": "Alle Felder dieser Gruppe leeren"
 }

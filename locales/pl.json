@@ -60,7 +60,6 @@
  "Fixed text (not editable)": "Stały tekst (nieedytowalny)",
  "Fixed value": "Stała wartość",
  "Fixed value (this instance)": "Stała wartość (ta instancja)",
- "Forget saved values": "Zapomnij zapisane wartości",
  "Form password (optional)": "Hasło formularza (opcjonalnie)",
  "Forms admin": "Administracja formularzy",
  "From link (URL)": "Z linku (URL)",
@@ -112,9 +111,7 @@
  "Printer": "Drukarka",
  "Public list": "Lista publiczna",
  "Random link": "Losowy link",
- "Remember on this device ({n} days)": "Zapamiętaj na tym urządzeniu ({n} dni)",
  "Remember per user (browser)": "Zapamiętuj dla użytkownika (przeglądarka)",
- "Remembered on this device for {n} days": "Zapamiętane na tym urządzeniu przez {n} dni",
  "Remove": "Usuń",
  "Remove field": "Usuń pole",
  "Replace image": "Zastąp obraz",
@@ -210,5 +207,12 @@
  "Remember in the browser which groups a visitor opened or closed": "Zapamiętuj w przeglądarce, które grupy odwiedzający otworzył lub zamknął",
  "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Grupy zamknięte na liście pól są na formularzu początkowo zwinięte. Bez tego ustawienia każda wizyta zaczyna się w ten sposób.",
  "Days remembered values are kept in the browser": "Liczba dni przechowywania zapamiętanych wartości w przeglądarce",
- "Values a form remembers on a device expire after this many days; 30 by default.": "Wartości zapamiętane przez formularz na urządzeniu wygasają po tylu dniach; domyślnie 30."
+ "Remembered on this device": "Zapamiętywane na tym urządzeniu",
+ "Remember my entries on this device": "Zapamiętuj moje wpisy na tym urządzeniu",
+ "Keep for {n} days": "Przechowuj przez {n} dni",
+ "Applies to the marked fields, including pictures. Switching it off removes what is saved here.": "Dotyczy oznaczonych pól, łącznie z obrazami. Wyłączenie usuwa to, co tu zapisano.",
+ "Remember entries on the device by default (visitors can switch it off on the form)": "Domyślnie zapamiętuj wpisy na urządzeniu (odwiedzający mogą to wyłączyć na formularzu)",
+ "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Domyślny czas przechowywania zapamiętanych wartości na urządzeniu; odwiedzający mogą zmienić liczbę na formularzu.",
+ "Pick a date": "Wybierz datę",
+ "Clear all fields in this group": "Wyczyść wszystkie pola w tej grupie"
 }

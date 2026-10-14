@@ -81,6 +81,6 @@ test('documents saved by 1.1.0 with scattered group members are reordered into b
 });
 
 test('older documents get the group folding defaults and the retention default', () => {
-  assert.equal(app.db.settings.rememberDays, 30);
+  assert.equal(app.db.settings.rememberDays, 30); assert.equal(app.db.settings.rememberDefault, true);
   for (const d of app.db.docs) { assert.deepEqual(d.collapsed, []); assert.equal(d.rememberGroups, true); }
 });

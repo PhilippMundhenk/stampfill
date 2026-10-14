@@ -98,7 +98,7 @@ test('admin places fields by double-click and configures prefill modes', async (
     await admin.fill('#fp input[type=text] >> nth=0', String(label));
     await admin.locator('#fp select').nth(0).selectOption(String(type));
     await admin.locator('#fp select').last().selectOption(String(pre));
-    if (pre === 'instance') { if (type === 'date') await admin.fill('#fp input[type=date]', '1990-02-01'); else await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Bietigheim'); }
+    if (pre === 'instance') { if (type === 'date') { await admin.fill('#fp .datef input[type=text]', '1990-02-01'); await admin.click('#fp .datef .cal'); await admin.evaluate(() => { const p = /** @type {HTMLInputElement} */ (document.querySelector('#fp .datef .datepick')); p.value = '1990-02-01'; p.dispatchEvent(new Event('change')); }); await expect(admin.locator('#fp .datef input[type=text]')).toHaveValue('1990-02-01'); } else await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Bietigheim'); }
     if (label === 'Full name') await admin.locator('#fp label.chk input').first().check(); // Required
     await expect(admin.locator('.fitem')).toHaveCount(defs.indexOf(defs.find((d) => d[0] === label)) + 1);
   }
@@ -272,7 +272,7 @@ test('admin configures the network printer', async () => {
   await expect(admin.locator('#ptest')).toContainText('Takes PDF');
   await admin.fill('input[placeholder="Print at home"]', 'Print at school');
   await admin.fill('#remDays', '45');
-  await admin.locator('label.chk input').check();
+  await admin.locator('label.chk:has-text("Let everyone") input').check();
   await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
   await shot(admin, '3-settings');
   // the admin password is stored in db.json on this instance, so it can be changed here
@@ -317,13 +317,16 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#f_date')).toHaveValue(TODAY);
   await expect(user.locator('#f_birthday')).toHaveValue('1985-12-24'); // from the link, normalised for the date input
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
-  await expect(user.locator('.panel label')).toHaveCount(10); // 9 fields plus "Remember on this device" of the signature
-  await expect(user.locator('.panel h2.fgroup')).toHaveText(['Applicant', 'Consent']); // group headings in field order
-  await expect(user.locator('.fgrp')).toHaveCount(2); await expect(user.locator('.fgrp.closed h2')).toHaveText('Consent'); // framed; folded as the editor says
-  await expect(user.locator('#f_full_name ~ .hint')).toHaveText('Remembered on this device for 45 days'); // the retention from Settings
+  await expect(user.locator('.panel label')).toHaveCount(11); // 9 fields plus the two of the "remember" box
+  await expect(user.locator('.panel h2.fgroup .gtog')).toHaveText(['Applicant', 'Consent']); // group headings in field order
+  await expect(user.locator('.fgrp')).toHaveCount(2); await expect(user.locator('.fgrp.closed h2 .gtog')).toHaveText('Consent'); // framed; folded as the editor says
+  await expect(user.locator('#f_full_name ~ .hint')).toHaveText('Remembered on this device');
+  await expect(user.locator('.rembox input[type=number]')).toHaveValue('45'); // the retention from Settings is the default
+  await expect(user.locator('.rembox input[type=checkbox]')).toBeChecked(); // one switch for everything, pictures included
+  await expect(user.locator('.imgbox:has(#f_signature) ~ .hint')).toHaveText('Remembered on this device');
+  await user.fill('.rembox input[type=number]', '7'); await user.locator('.rembox input[type=number]').press('Tab'); // the visitor's own number
   expect(await user.locator('.panel label:not(.chk)').allTextContents()).toEqual(expect.arrayContaining(['Full name *', 'Address']));
   await expect(user.locator('.panel label').first()).toHaveText('Full name *');
-  await expect(user.locator('input.remember')).not.toBeChecked(); // pictures are not remembered unless asked
   await expect(user.locator('#f_agree')).toBeChecked(); // checkbox from the link
   // installable as an app that opens this very form
   await expect(user.locator('link[rel=manifest]')).toHaveAttribute('href', '/d/sample-request/manifest.webmanifest');
@@ -364,12 +367,14 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#toast.bad')).toContainText('Please fill in: Full name');
   await expect(user.locator('#f_full_name')).toBeFocused(); await expect(user.locator('.fgrp.closed')).toHaveCount(1); // the group opened to show it
   await user.locator('.fgrp.closed .gtog').click(); await expect(user.locator('.fgrp.closed')).toHaveCount(0); // open "Consent" for the signature
-  await expect(user.locator('label.chk.small')).toContainText('(45 days)');
+  // the date is shown in the language's format (English: ISO) and the browser's calendar feeds the field
+  await user.evaluate(() => { const p = /** @type {HTMLInputElement} */ (document.querySelector('.datef:has(#f_date) .datepick')); p.value = '2024-05-06'; p.dispatchEvent(new Event('change')); });
+  await expect(user.locator('#f_date')).toHaveValue('2024-05-06');
+  await user.click('.datef:has(#f_date) .cal'); // opens the calendar where the browser allows it; harmless here
   await settle(user, async () => {
     await user.fill('#f_full_name', 'Jürgen Müller-Weiß'); await user.fill('#f_date', '2026-10-13');
     await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
   });
-  await user.locator('input.remember').check(); // pictures are only remembered on request (before the modal pad opens)
   // signature pad: cancel, empty, then a real stroke
   await user.click('text=Draw signature'); await expect(user.locator('dialog.sigdlg')).toBeVisible();
   await user.click('dialog.sigdlg >> text=Cancel'); await expect(user.locator('dialog.sigdlg')).toHaveCount(0);
@@ -377,7 +382,7 @@ test('form prefills from the link and from fixed values, validates required fiel
   await user.click('text=Use signature'); await expect(user.locator('#toast.bad')).toHaveText('Nothing drawn yet');
   const cv = await user.locator('canvas.sig').boundingBox(); if (!cv) throw new Error('no pad');
   const stroke = async (dx) => { await user.mouse.move(cv.x + 20 + dx, cv.y + 70); await user.mouse.down(); await user.mouse.move(cv.x + 90 + dx, cv.y + 30, { steps: 6 }); await user.mouse.move(cv.x + 180 + dx, cv.y + 80, { steps: 6 }); await user.mouse.up(); };
-  await stroke(0); await user.click('text=Undo'); await stroke(0); await stroke(200); await user.click('text=Clear'); await stroke(40);
+  await stroke(0); await user.click('text=Undo'); await stroke(0); await stroke(200); await user.click('dialog.sigdlg >> text=Clear'); await stroke(40);
   await settle(user, () => user.click('text=Use signature'));
   await expect(user.locator('dialog.sigdlg')).toHaveCount(0);
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
@@ -450,11 +455,24 @@ test('image print fallback renders pages and calls window.print', async () => {
   await cov.stop(p); await p.close();
 });
 
-test('"Forget saved values" clears browser prefill', async () => {
-  await user.click('text=Forget saved values');
-  await expect(user.locator('#toast')).toHaveText('Saved values removed from this browser');
-  await expect(user.locator('#f_full_name')).toHaveValue('');
+test('"Clear" empties all fields of a group, on screen and in the browser\'s memory', async () => {
+  await expect(user.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
+  await user.locator('.fgrp', { hasText: 'Applicant' }).locator('button.gclear').click();
+  await expect(user.locator('#f_full_name')).toHaveValue(''); await expect(user.locator('#f_address')).toHaveValue('');
+  await expect(user.locator('#f_date')).toHaveValue(TODAY); // outside the group: untouched
   await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
+  await expect(user.locator('#f_full_name')).toHaveValue('');
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible(); // another group: still remembered
+  await user.fill('#f_full_name', 'Jürgen Müller-Weiß');
+});
+
+test('switching "Remember my entries" off clears browser prefill', async () => {
+  await expect(user.locator('.rembox input[type=number]')).toHaveValue('7'); // the visitor's number of days survived the reloads
+  await user.locator('.rembox input[type=checkbox]').uncheck();
+  await expect(user.locator('#toast')).toHaveText('Saved values removed from this browser');
+  await expect(user.locator('#f_full_name ~ .hint')).toBeHidden();
+  await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
+  await expect(user.locator('.rembox input[type=checkbox]')).not.toBeChecked(); // the choice is remembered
   await expect(user.locator('#f_full_name')).toHaveValue('');
   await expect(user.locator('#f_address')).toHaveValue('');
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden();
@@ -485,11 +503,14 @@ test("the form speaks the visitor's language and can be switched", async () => {
   const dp = track(await ctx.newPage(), 'german');
   await dp.goto(link); await expect(dp.locator('.preview canvas')).toBeVisible();
   await expect(dp.locator('.actions button.pri')).toHaveText('Drucken'); // browser language
+  await expect(dp.locator('#f_date')).toHaveValue(/^\d{2}\.\d{2}\.\d{4}$/); // dates in the language's format
+  await dp.fill('#f_date', '1.2.2025'); await dp.locator('#f_date').press('Tab'); await expect(dp.locator('#f_date')).toHaveValue('01.02.2025'); // day first here
   await expect(dp.locator('html')).toHaveAttribute('lang', 'de');
   await dp.selectOption('#langSel', 'ar'); await expect(dp.locator('.preview canvas')).toBeVisible();
   await expect(dp.locator('html')).toHaveAttribute('dir', 'rtl'); await expect(dp.locator('.actions button.pri')).toHaveText('طباعة');
   await dp.selectOption('#langSel', 'en'); await expect(dp.locator('.preview canvas')).toBeVisible();
   await expect(dp.locator('.actions button.pri')).toHaveText('Print'); await expect(dp.locator('html')).toHaveAttribute('dir', 'ltr');
+  await expect(dp.locator('#f_date')).toHaveValue(TODAY); // ISO in English (the typed date was not remembered: "today" prefill)
   await dp.goto('/admin'); await expect(dp.locator('form.login h1')).toHaveText('Admin login'); // the choice is remembered
   await dp.selectOption('#langSel', 'de'); await expect(dp.locator('form.login h1')).toHaveText('Admin-Anmeldung'); // the admin page too
   await cov.stop(dp); await ctx.close();

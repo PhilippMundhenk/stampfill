@@ -17,7 +17,9 @@ household. [More screenshots](docs/screenshots.md).
 - **Visual editor**: double-click on the rendered page to add a field, drag to move or resize it.
   Text, multi-line text, date, checkbox, image, signature (drawing pad or upload) and fixed text.
 - **Prefill**: a field can be remembered in the visitor's browser, fixed by the admin, carried in
-  the link (`/d/<link>#key=value`), or default to today's date.
+  the link (`/d/<link>#key=value`), or default to today's date. One switch on the form covers
+  everything remembered, pictures included, with the number of days next to it; every group has a
+  "Clear" button.
 - **Groups and order**: fields appear in the order of the editor's list. A group name becomes a
   heading on the form; groups are framed blocks that fold, move as units and can start closed.
 - **Printing**: browser print, PDF download, and server-side printing to any IPP printer or CUPS
@@ -29,7 +31,8 @@ household. [More screenshots](docs/screenshots.md).
 - **Templates stay intact**: pages can be rotated by quarter turns or single degrees to straighten
   a scan; the uploaded PDF is never modified.
 - **Eight languages**: English, German, Turkish, Arabic (right-to-left), Russian, Ukrainian, Greek
-  and Polish, following the browser with a switcher in the header.
+  and Polish, following the browser with a switcher in the header. Dates are shown in the format of
+  the chosen language.
 - **Light and dark**, phone-friendly, hardened by default: see [docs/security.md](docs/security.md).
 
 ## Quick start

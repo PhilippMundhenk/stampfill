@@ -60,7 +60,6 @@
  "Fixed text (not editable)": "نص ثابت (غير قابل للتعديل)",
  "Fixed value": "قيمة ثابتة",
  "Fixed value (this instance)": "قيمة ثابتة (هذا التثبيت)",
- "Forget saved values": "نسيان القيم المحفوظة",
  "Form password (optional)": "كلمة مرور النموذج (اختياري)",
  "Forms admin": "إدارة النماذج",
  "From link (URL)": "من الرابط (URL)",
@@ -112,9 +111,7 @@
  "Printer": "الطابعة",
  "Public list": "القائمة العامة",
  "Random link": "رابط عشوائي",
- "Remember on this device ({n} days)": "التذكر على هذا الجهاز ({n} يومًا)",
  "Remember per user (browser)": "التذكر لكل مستخدم (المتصفح)",
- "Remembered on this device for {n} days": "محفوظ على هذا الجهاز لمدة {n} يومًا",
  "Remove": "إزالة",
  "Remove field": "إزالة الحقل",
  "Replace image": "استبدال الصورة",
@@ -210,5 +207,12 @@
  "Remember in the browser which groups a visitor opened or closed": "تذكّر في المتصفح المجموعات التي فتحها الزائر أو أغلقها",
  "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "المجموعات المغلقة في قائمة الحقول تبدأ مغلقة في النموذج. بدون هذا الإعداد تبدأ كل زيارة هكذا.",
  "Days remembered values are kept in the browser": "عدد أيام حفظ القيم المتذكَّرة في المتصفح",
- "Values a form remembers on a device expire after this many days; 30 by default.": "تنتهي صلاحية القيم التي يتذكرها النموذج على الجهاز بعد هذا العدد من الأيام؛ 30 افتراضيًا."
+ "Remembered on this device": "محفوظ على هذا الجهاز",
+ "Remember my entries on this device": "تذكّر مدخلاتي على هذا الجهاز",
+ "Keep for {n} days": "الاحتفاظ لمدة {n} يومًا",
+ "Applies to the marked fields, including pictures. Switching it off removes what is saved here.": "ينطبق على الحقول المميزة، بما فيها الصور. إيقافه يحذف ما حُفظ هنا.",
+ "Remember entries on the device by default (visitors can switch it off on the form)": "تذكّر المدخلات على الجهاز افتراضيًا (يمكن للزوار إيقافه في النموذج)",
+ "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "الافتراضي لمدة احتفاظ النموذج بالقيم المتذكَّرة على الجهاز؛ يمكن للزوار تغيير الرقم في النموذج.",
+ "Pick a date": "اختيار تاريخ",
+ "Clear all fields in this group": "مسح كل حقول هذه المجموعة"
 }
