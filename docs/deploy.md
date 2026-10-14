@@ -56,7 +56,8 @@ All state is in the data directory (`stampfill-data` in Compose, `DATA_DIR` othe
 
 Nothing else is kept on the server, so backing up that directory is a complete backup. It holds
 the signing secret and password hashes, so treat backups as secrets. Values visitors chose to
-remember live in their own browsers only, for 30 days.
+remember live in their own browsers only, for 30 days by default (the number of days is a
+setting).
 
 ## Upgrades
 

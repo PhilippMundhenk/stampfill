@@ -112,9 +112,9 @@
  "Printer": "Yazıcı",
  "Public list": "Genel liste",
  "Random link": "Rastgele bağlantı",
- "Remember on this device (30 days)": "Bu cihazda hatırla (30 gün)",
+ "Remember on this device ({n} days)": "Bu cihazda hatırla ({n} gün)",
  "Remember per user (browser)": "Kullanıcı başına hatırla (tarayıcı)",
- "Remembered on this device for 30 days": "Bu cihazda 30 gün hatırlanır",
+ "Remembered on this device for {n} days": "Bu cihazda {n} gün hatırlanır",
  "Remove": "Kaldır",
  "Remove field": "Alanı kaldır",
  "Replace image": "Resmi değiştir",
@@ -205,5 +205,10 @@
  "Rename group": "Grubu yeniden adlandır",
  "Group name (empty removes the group)": "Grup adı (boş bırakılırsa grup kaldırılır)",
  "Move group up": "Grubu yukarı taşı",
- "Move group down": "Grubu aşağı taşı"
+ "Move group down": "Grubu aşağı taşı",
+ "Closed groups start closed on the form": "Kapalı gruplar formda kapalı olarak başlar",
+ "Remember in the browser which groups a visitor opened or closed": "Ziyaretçinin hangi grupları açıp kapattığını tarayıcıda hatırla",
+ "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Alan listesinde kapatılan gruplar formda kapalı olarak başlar. Bu ayar olmadan her ziyaret böyle başlar.",
+ "Days remembered values are kept in the browser": "Hatırlanan değerlerin tarayıcıda tutulduğu gün sayısı",
+ "Values a form remembers on a device expire after this many days; 30 by default.": "Bir formun cihazda hatırladığı değerler bu kadar gün sonra silinir; varsayılan 30."
 }

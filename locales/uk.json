@@ -112,9 +112,9 @@
  "Printer": "Принтер",
  "Public list": "Відкритий список",
  "Random link": "Випадкове посилання",
- "Remember on this device (30 days)": "Запам'ятати на цьому пристрої (30 днів)",
+ "Remember on this device ({n} days)": "Запам'ятати на цьому пристрої ({n} днів)",
  "Remember per user (browser)": "Запам'ятовувати для користувача (браузер)",
- "Remembered on this device for 30 days": "Запам'ятовується на цьому пристрої на 30 днів",
+ "Remembered on this device for {n} days": "Запам'ятовується на цьому пристрої на {n} днів",
  "Remove": "Видалити",
  "Remove field": "Видалити поле",
  "Replace image": "Замінити зображення",
@@ -205,5 +205,10 @@
  "Rename group": "Перейменувати групу",
  "Group name (empty removes the group)": "Назва групи (порожнє видаляє групу)",
  "Move group up": "Перемістити групу вгору",
- "Move group down": "Перемістити групу вниз"
+ "Move group down": "Перемістити групу вниз",
+ "Closed groups start closed on the form": "Закриті групи на формі спочатку згорнуті",
+ "Remember in the browser which groups a visitor opened or closed": "Запам’ятовувати в браузері, які групи відвідувач відкрив або закрив",
+ "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Групи, закриті в списку полів, на формі спочатку згорнуті. Без цього налаштування кожен візит починається так.",
+ "Days remembered values are kept in the browser": "Скільки днів запам’ятовані значення зберігаються в браузері",
+ "Values a form remembers on a device expire after this many days; 30 by default.": "Значення, які форма запам’ятовує на пристрої, видаляються через стільки днів; типово 30."
 }

@@ -352,6 +352,19 @@ test('the audit log records admin actions and print jobs without form values', a
   assert.ok(log.every((e) => e.t && e.ip));
 });
 
+test('group folding and the retention period round-trip and reach the form', async () => {
+  const put = async (rememberDays) => (await (await call('PUT', '/api/admin/settings', { siteTitle: 'My forms', rememberDays })).json()).rememberDays;
+  assert.equal(await put('x'), 30, 'default'); assert.equal(await put(99999), 3650, 'clamped'); assert.equal(await put(45.4), 45);
+  const d = await (await call('POST', '/api/admin/docs?title=Folded', SAMPLE)).json(); assert.deepEqual(d.collapsed, []); assert.equal(d.rememberGroups, true);
+  const fields = [{ label: 'A', group: 'One' }, { label: 'B', group: 'Two' }, { label: 'C' }];
+  const u = await (await call('PUT', '/api/admin/docs/' + d.id, { ...d, fields, collapsed: ['Two', 'Gone', 'Two', 7], rememberGroups: false })).json();
+  assert.deepEqual(u.collapsed, ['Two'], 'only groups that exist, each once'); assert.equal(u.rememberGroups, false);
+  const pub = await (await fetch(base + '/api/d/' + u.slug)).json();
+  assert.deepEqual(pub.collapsed, ['Two']); assert.equal(pub.rememberGroups, false); assert.equal(pub.rememberDays, 45);
+  const back = await (await call('PUT', '/api/admin/docs/' + d.id, { ...d })).json(); assert.deepEqual(back.collapsed, []); assert.equal(back.rememberGroups, true, 'defaults when absent');
+  await call('DELETE', '/api/admin/docs/' + d.id);
+});
+
 test('logout clears the session; repeated failures are rate limited per client IP', async () => {
   const r = await call('POST', '/api/logout'); assert.match(r.headers.get('set-cookie'), /Max-Age=0/);
   cookie = ''; assert.equal((await call('GET', '/api/admin/me')).status, 401);

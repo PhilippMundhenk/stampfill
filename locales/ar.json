@@ -112,9 +112,9 @@
  "Printer": "الطابعة",
  "Public list": "القائمة العامة",
  "Random link": "رابط عشوائي",
- "Remember on this device (30 days)": "التذكر على هذا الجهاز (30 يومًا)",
+ "Remember on this device ({n} days)": "التذكر على هذا الجهاز ({n} يومًا)",
  "Remember per user (browser)": "التذكر لكل مستخدم (المتصفح)",
- "Remembered on this device for 30 days": "محفوظ على هذا الجهاز لمدة 30 يومًا",
+ "Remembered on this device for {n} days": "محفوظ على هذا الجهاز لمدة {n} يومًا",
  "Remove": "إزالة",
  "Remove field": "إزالة الحقل",
  "Replace image": "استبدال الصورة",
@@ -205,5 +205,10 @@
  "Rename group": "إعادة تسمية المجموعة",
  "Group name (empty removes the group)": "اسم المجموعة (فارغ لإزالة المجموعة)",
  "Move group up": "نقل المجموعة لأعلى",
- "Move group down": "نقل المجموعة لأسفل"
+ "Move group down": "نقل المجموعة لأسفل",
+ "Closed groups start closed on the form": "المجموعات المغلقة تبدأ مغلقة في النموذج",
+ "Remember in the browser which groups a visitor opened or closed": "تذكّر في المتصفح المجموعات التي فتحها الزائر أو أغلقها",
+ "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "المجموعات المغلقة في قائمة الحقول تبدأ مغلقة في النموذج. بدون هذا الإعداد تبدأ كل زيارة هكذا.",
+ "Days remembered values are kept in the browser": "عدد أيام حفظ القيم المتذكَّرة في المتصفح",
+ "Values a form remembers on a device expire after this many days; 30 by default.": "تنتهي صلاحية القيم التي يتذكرها النموذج على الجهاز بعد هذا العدد من الأيام؛ 30 افتراضيًا."
 }

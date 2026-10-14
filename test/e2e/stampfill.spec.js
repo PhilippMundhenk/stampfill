@@ -200,10 +200,13 @@ test('fields can be grouped and reordered; groups are blocks that move as one', 
   await expect(admin.locator('.flist .fgroup .gname')).toHaveText(['Applicant', 'Sign-off']);
   dialogAnswer = 'Consent'; await heading('Sign-off').locator('button[title="Rename group"]').click(); dialogAnswer = 'accept';
   await expect(admin.locator('.flist .fgroup .gname')).toHaveText(['Applicant', 'Consent']);
+  await heading('Consent').locator('button.gfold').click(); // folded here = starts folded on the form
+  await expect(item('Signature')).toHaveCount(0); await expect(heading('Consent')).toContainText('(2)');
   await expect(admin.locator('button.pri')).toHaveText('Save changes');
   await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
   await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(10);
   expect((await order()).slice(0, 2)).toEqual(['Full name', 'Address']); // the order is saved
+  await expect(heading('Consent')).toHaveClass(/closed/); // and so is the fold
 });
 
 test('admin saves metadata and gets a direct link', async () => {
@@ -268,6 +271,7 @@ test('admin configures the network printer', async () => {
   await expect(admin.locator('#ptest')).toContainText('Mock IPP printer — idle');
   await expect(admin.locator('#ptest')).toContainText('Takes PDF');
   await admin.fill('input[placeholder="Print at home"]', 'Print at school');
+  await admin.fill('#remDays', '45');
   await admin.locator('label.chk input').check();
   await admin.click('button.pri'); await expect(admin.locator('#toast')).toHaveText('Saved');
   await shot(admin, '3-settings');
@@ -315,7 +319,8 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
   await expect(user.locator('.panel label')).toHaveCount(10); // 9 fields plus "Remember on this device" of the signature
   await expect(user.locator('.panel h2.fgroup')).toHaveText(['Applicant', 'Consent']); // group headings in field order
-  await expect(user.locator('.panel hr.fsep')).toHaveCount(1); // a rule where loose fields follow a group
+  await expect(user.locator('.fgrp')).toHaveCount(2); await expect(user.locator('.fgrp.closed h2')).toHaveText('Consent'); // framed; folded as the editor says
+  await expect(user.locator('#f_full_name ~ .hint')).toHaveText('Remembered on this device for 45 days'); // the retention from Settings
   expect(await user.locator('.panel label:not(.chk)').allTextContents()).toEqual(expect.arrayContaining(['Full name *', 'Address']));
   await expect(user.locator('.panel label').first()).toHaveText('Full name *');
   await expect(user.locator('input.remember')).not.toBeChecked(); // pictures are not remembered unless asked
@@ -354,9 +359,12 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('.imgbox:has(#f_stamp) .thumb')).toBeVisible(); // the admin's default stamp
   await expect(user.getByText('A default image is provided')).toBeVisible();
   await expect(user.locator('#f_full_name')).toHaveValue('');
-  await user.click('button.pri'); // Print with the required field empty
+  await user.locator('.fgrp', { hasText: 'Applicant' }).locator('.gtog').click(); await expect(user.locator('.fgrp.closed')).toHaveCount(2);
+  await user.click('button.pri'); // Print with the required field empty, inside a folded group
   await expect(user.locator('#toast.bad')).toContainText('Please fill in: Full name');
-  await expect(user.locator('#f_full_name')).toBeFocused();
+  await expect(user.locator('#f_full_name')).toBeFocused(); await expect(user.locator('.fgrp.closed')).toHaveCount(1); // the group opened to show it
+  await user.locator('.fgrp.closed .gtog').click(); await expect(user.locator('.fgrp.closed')).toHaveCount(0); // open "Consent" for the signature
+  await expect(user.locator('label.chk.small')).toContainText('(45 days)');
   await settle(user, async () => {
     await user.fill('#f_full_name', 'Jürgen Müller-Weiß'); await user.fill('#f_date', '2026-10-13');
     await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
@@ -409,6 +417,7 @@ test('"Copy link with values" carries only URL-prefill fields', async () => {
 test('browser-remembered values survive a reload, link values do not', async () => {
   await user.goto(link);
   await expect(user.locator('.preview canvas')).toBeVisible();
+  await expect(user.locator('.fgrp.closed')).toHaveCount(0); // the opened groups are remembered in this browser too
   await expect(user.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
   await expect(user.locator('#f_address')).toHaveValue(/74321/);
   await expect(user.locator('#f_reference')).toHaveValue('');

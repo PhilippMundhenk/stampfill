@@ -112,9 +112,9 @@
  "Printer": "Εκτυπωτής",
  "Public list": "Δημόσια λίστα",
  "Random link": "Τυχαίος σύνδεσμος",
- "Remember on this device (30 days)": "Απομνημόνευση σε αυτή τη συσκευή (30 ημέρες)",
+ "Remember on this device ({n} days)": "Απομνημόνευση σε αυτή τη συσκευή ({n} ημέρες)",
  "Remember per user (browser)": "Απομνημόνευση ανά χρήστη (πρόγραμμα περιήγησης)",
- "Remembered on this device for 30 days": "Αποθηκεύεται σε αυτή τη συσκευή για 30 ημέρες",
+ "Remembered on this device for {n} days": "Αποθηκεύεται σε αυτή τη συσκευή για {n} ημέρες",
  "Remove": "Αφαίρεση",
  "Remove field": "Αφαίρεση πεδίου",
  "Replace image": "Αντικατάσταση εικόνας",
@@ -205,5 +205,10 @@
  "Rename group": "Μετονομασία ομάδας",
  "Group name (empty removes the group)": "Όνομα ομάδας (κενό αφαιρεί την ομάδα)",
  "Move group up": "Μετακίνηση ομάδας πάνω",
- "Move group down": "Μετακίνηση ομάδας κάτω"
+ "Move group down": "Μετακίνηση ομάδας κάτω",
+ "Closed groups start closed on the form": "Οι κλειστές ομάδες ξεκινούν κλειστές στη φόρμα",
+ "Remember in the browser which groups a visitor opened or closed": "Να θυμάται το πρόγραμμα περιήγησης ποιες ομάδες άνοιξε ή έκλεισε ο επισκέπτης",
+ "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Οι ομάδες που κλείνουν στη λίστα πεδίων ξεκινούν κλειστές στη φόρμα. Χωρίς αυτή τη ρύθμιση κάθε επίσκεψη ξεκινά έτσι.",
+ "Days remembered values are kept in the browser": "Ημέρες διατήρησης των απομνημονευμένων τιμών στο πρόγραμμα περιήγησης",
+ "Values a form remembers on a device expire after this many days; 30 by default.": "Οι τιμές που θυμάται μια φόρμα σε μια συσκευή λήγουν μετά από τόσες ημέρες· προεπιλογή 30."
 }

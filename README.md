@@ -19,7 +19,7 @@ household. [More screenshots](docs/screenshots.md).
 - **Prefill**: a field can be remembered in the visitor's browser, fixed by the admin, carried in
   the link (`/d/<link>#key=value`), or default to today's date.
 - **Groups and order**: fields appear in the order of the editor's list. A group name becomes a
-  heading on the form; groups move as blocks, fields move within them.
+  heading on the form; groups are framed blocks that fold, move as units and can start closed.
 - **Printing**: browser print, PDF download, and server-side printing to any IPP printer or CUPS
   queue with a button the admin can rename and switch off per form.
 - **Sharing**: unguessable random links by default, readable link names on request, an optional

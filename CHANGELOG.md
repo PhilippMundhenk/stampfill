@@ -21,6 +21,12 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - Fields of one group are always kept together, at the position of the group's first field.
   Existing documents are reordered that way on start; the relative order within a group is kept.
+- Groups on the form are framed blocks that fold and unfold. A group closed in the editor's field
+  list starts closed on the form; a per-form setting decides whether a visitor's own choice is
+  remembered in their browser. A folded group opens by itself when a required field in it is
+  missing. (#59, #60)
+- The number of days that remembered values stay in a visitor's browser is a setting (30 by
+  default); the hints on the form show the configured value. (#61)
 - The README is a short overview again; deployment, printing and the screenshots moved to
   `docs/deploy.md`, `docs/printing.md` and `docs/screenshots.md`. (#58)
 

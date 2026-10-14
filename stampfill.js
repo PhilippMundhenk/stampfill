@@ -60,7 +60,7 @@ catch (e) {
   process.exit(1);
 }
 const rid = (n = 9) => crypto.randomBytes(n).toString('base64url');
-const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home', language: 'en' };
+const DEFAULTS = { siteTitle: 'Forms', printerUrl: '', publicPrint: false, printButton: 'Print at home', language: 'en', rememberDays: 30 };
 const LANGS = ['en', 'de', 'tr', 'ar', 'ru', 'uk', 'el', 'pl']; // locales/<lang>.json; English is the source language
 const LOCALES = Object.fromEntries(LANGS.filter((l) => l !== 'en').map((l) => [l, fs.readFileSync(path.join(__dirname, 'locales', l + '.json'))]));
 let db = { secret: rid(32), auth: null, settings: { ...DEFAULTS }, docs: [] };
@@ -287,11 +287,14 @@ async function applyRotation(pdf, rotation) {
     pdf.removePage(i + 1);
   }
 }
+// groups that start folded on the form: names of groups that exist, each once
+const cleanCollapsed = (list, fields) => { const names = new Set(fields.map((f) => f.group).filter(Boolean)); return [...new Set((Array.isArray(list) ? list : []).filter((x) => typeof x === 'string').map((x) => str(x, 40).trim()).filter((x) => names.has(x)))]; };
 const cleanTags = (t) => [...new Set((Array.isArray(t) ? t : []).map((x) => str(x, 30).trim()).filter(Boolean))].slice(0, 20);
 const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password });
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
   serverPrint: !!db.settings.printerUrl && d.serverPrint !== false && (db.settings.publicPrint || isAdmin(req)), printLabel: db.settings.printButton,
+  rememberDays: db.settings.rememberDays, collapsed: d.collapsed || [], rememberGroups: d.rememberGroups !== false,
   fields: d.fields.filter((f) => f.type !== 'static').map((f) => ({ key: f.key, label: f.label, group: f.group, type: f.type, required: f.required, hidden: f.hidden, prefill: f.prefill, value: f.prefill === 'instance' ? f.value : '' })),
 });
 async function inspectPdf(buf) {
@@ -587,7 +590,7 @@ async function route(req, res) {
       const b = await readJson(req), u = str(b.printerUrl, 500).trim();
       if (u && !/^(https?|ipps?):\/\/[^\s]+$/.test(u)) throw new HttpErr(400, 'Printer URL must start with http://, https://, ipp:// or ipps://');
       db.settings = { siteTitle: str(b.siteTitle, 60).trim() || 'Forms', printerUrl: u, publicPrint: !!b.publicPrint, printButton: str(b.printButton, 40).trim() || DEFAULTS.printButton,
-        language: LANGS.includes(b.language) ? b.language : 'en' }; save();
+        language: LANGS.includes(b.language) ? b.language : 'en', rememberDays: Math.round(num(b.rememberDays, 30, 1, 3650)) }; save();
       audit(req, 'settings.update', { printerUrl: u, publicPrint: db.settings.publicPrint });
     }
     if (m === 'GET' || m === 'PUT') return json(res, 200, db.settings);
@@ -614,7 +617,7 @@ async function route(req, res) {
     if (m === 'POST') {
       const buf = await readBody(req, MAX_PDF), pages = await inspectPdf(buf);
       const title = str(url.searchParams.get('title'), 120).trim() || 'Untitled';
-      const doc = { id: rid(8), slug: rid(10), title, description: '', tags: [], listed: false, serverPrint: true, password: null, pages, rotation: cleanRotation([], pages), fields: [], created: Date.now(), updated: Date.now() };
+      const doc = { id: rid(8), slug: rid(10), title, description: '', tags: [], listed: false, serverPrint: true, password: null, collapsed: [], rememberGroups: true, pages, rotation: cleanRotation([], pages), fields: [], created: Date.now(), updated: Date.now() };
       fs.writeFileSync(pdfPath(doc.id), buf, { mode: 0o600 }); db.docs.unshift(doc); save(); audit(req, 'doc.create', { doc: doc.id, title });
       return json(res, 200, adminDoc(doc));
     }
@@ -635,8 +638,9 @@ async function route(req, res) {
           if (pw && pw.length < 8) throw new HttpErr(400, 'The form password needs at least 8 characters');
           doc.password = pw ? await hashPwAsync(pw) : null; audit(req, pw ? 'doc.password.set' : 'doc.password.clear', { doc: doc.id });
         }
+        const fields = cleanFields(b.fields, doc.pages);
         Object.assign(doc, { title: str(b.title, 120).trim() || 'Untitled', description: str(b.description, 500).trim(), tags: cleanTags(b.tags), listed: !!b.listed, serverPrint: b.serverPrint !== false,
-          rotation: b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, fields: cleanFields(b.fields, doc.pages), updated: Date.now() });
+          rotation: b.rotation !== undefined ? cleanRotation(b.rotation, doc.pages) : doc.rotation, fields, collapsed: cleanCollapsed(b.collapsed, fields), rememberGroups: b.rememberGroups !== false, updated: Date.now() });
         save(); return json(res, 200, adminDoc(doc));
       }
       if (m === 'DELETE') {
@@ -669,6 +673,7 @@ function migrate() {
     doc.pages = Math.max(1, Math.round(num(doc.pages, 1, 1, 10000)));
     doc.fields = cleanFields(doc.fields, doc.pages); doc.rotation = cleanRotation(doc.rotation, doc.pages);
     if (doc.serverPrint === undefined) doc.serverPrint = true; if (doc.password === undefined) doc.password = null;
+    doc.collapsed = cleanCollapsed(doc.collapsed, doc.fields); if (doc.rememberGroups === undefined) doc.rememberGroups = true;
   }
   pruneImages(); save();
 }
@@ -695,13 +700,13 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
 const CSS = String.raw`
-:root{color-scheme:light dark;--bg:#f4f5f7;--card:#fff;--ink:#16181d;--mut:#687079;--line:#e4e6ea;--line2:#cdd1d7;--acc:#2f6bff;--acc-2:#1f57e6;--acc-ink:#fff;--acc-soft:rgba(47,107,255,.13);--bad:#d3372c;--bad-soft:rgba(211,55,44,.12);--ok:#1e8a4f;--paper:#e8eaee;--hdr:rgba(255,255,255,.82);--sh:0 1px 2px rgba(16,18,24,.06),0 1px 1px rgba(16,18,24,.03);--sh2:0 10px 28px rgba(16,18,24,.12),0 2px 6px rgba(16,18,24,.06);--r:12px;--rs:9px}
-@media(prefers-color-scheme:dark){:root{--bg:#111317;--card:#1a1d23;--ink:#e8eaee;--mut:#99a1ab;--line:#292e36;--line2:#3b414b;--acc:#6f9cff;--acc-2:#8ab0ff;--acc-ink:#0a1430;--acc-soft:rgba(111,156,255,.18);--bad:#ff7b70;--bad-soft:rgba(255,123,112,.16);--ok:#5fd08f;--paper:#0c0e12;--hdr:rgba(26,29,35,.82);--sh:0 1px 2px rgba(0,0,0,.45);--sh2:0 12px 32px rgba(0,0,0,.55)}}
+:root{color-scheme:light dark;--bg:#f4f5f7;--card:#fff;--ink:#16181d;--mut:#687079;--line:#e4e6ea;--line2:#cdd1d7;--acc:#2f6bff;--acc-2:#1f57e6;--acc-ink:#fff;--acc-soft:rgba(47,107,255,.13);--bad:#d3372c;--bad-soft:rgba(211,55,44,.12);--ok:#1e8a4f;--paper:#e8eaee;--hdr:rgba(255,255,255,.82);--sh:0 1px 2px rgba(16,18,24,.06),0 1px 1px rgba(16,18,24,.03);--sh2:0 10px 28px rgba(16,18,24,.12),0 2px 6px rgba(16,18,24,.06);--r:12px;--rs:9px;--grp:rgba(47,107,255,.05)}
+@media(prefers-color-scheme:dark){:root{--bg:#111317;--card:#1a1d23;--ink:#e8eaee;--mut:#99a1ab;--line:#292e36;--line2:#3b414b;--acc:#6f9cff;--acc-2:#8ab0ff;--acc-ink:#0a1430;--acc-soft:rgba(111,156,255,.18);--bad:#ff7b70;--bad-soft:rgba(255,123,112,.16);--ok:#5fd08f;--paper:#0c0e12;--hdr:rgba(26,29,35,.82);--sh:0 1px 2px rgba(0,0,0,.45);--sh2:0 12px 32px rgba(0,0,0,.55);--grp:rgba(111,156,255,.08)}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%;scroll-padding-top:72px}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,"Segoe UI Variable Text",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
 header{position:sticky;top:0;z-index:5;display:flex;gap:16px;align-items:center;padding:10px 20px;border-bottom:1px solid var(--line);background:var(--hdr);backdrop-filter:saturate(180%) blur(14px);-webkit-backdrop-filter:saturate(180%) blur(14px)}
@@ -780,7 +785,12 @@ details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([o
 .fgroup{padding:5px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);background:var(--bg);border-bottom:1px solid var(--line)}
 h2.fgroup{padding:0;background:none;border:0;margin:18px 0 2px;font-size:12px}
 .fitem.over,.flist .fgroup.over{box-shadow:inset 0 2px 0 var(--acc)}.flist .fgroup{display:flex;align-items:center;gap:8px}.flist .fgroup .gname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flist .fgroup .grip{cursor:grab}.fitem.ing{padding-left:22px}
-.fsep{border:0;border-top:1px solid var(--line);margin:18px 0 4px}#installBtn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}#installBtn .ico{display:inline-flex}.grip{color:var(--mut);cursor:grab;font-size:13px;letter-spacing:-3px;user-select:none}
+.fgrp{border:1px solid var(--line2);border-radius:var(--rs);padding:2px 14px 14px;margin-top:16px;background:var(--grp)}.fgrp h2.fgroup{margin:0}.fgrp.closed{padding-bottom:2px}.fgrp.closed .gbody{display:none}
+.gtog{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;gap:9px;width:100%;padding:10px 0;font:inherit;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+.gtog:hover{color:var(--ink)}.gtog:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+.gtog::before{content:'';flex:none;width:7px;height:7px;border-right:1.7px solid currentColor;border-bottom:1.7px solid currentColor;transform:translateY(-2px) rotate(45deg);transition:transform .15s}
+.fgrp.closed .gtog::before{transform:rotate(-45deg)}[dir=rtl] .fgrp.closed .gtog::before{transform:rotate(135deg)}.gbody>div:first-child>label{margin-top:4px}
+.flist .fgroup .gfold{min-width:24px;font-size:14px;line-height:18px;padding:0 4px}.flist .fgroup.closed{border-bottom:1px solid var(--line)}#installBtn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}#installBtn .ico{display:inline-flex}.grip{color:var(--mut);cursor:grab;font-size:13px;letter-spacing:-3px;user-select:none}
 .ord{display:flex;gap:2px}.ord button.tiny{padding:0 5px;font-size:9px;line-height:18px;box-shadow:none}
 .fitem{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}.fitem:hover{background:var(--bg)}
 .fitem:last-child{border-bottom:0}.fitem.on{background:var(--acc-soft);box-shadow:inset 3px 0 0 var(--acc)}.fitem b{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -943,7 +953,7 @@ async function formView() {
   }
   // values from the link: only #key=value, which never leaves the browser (a query string would reach server and proxy logs)
   const fromUrl = new URLSearchParams(location.hash.slice(1));
-  const LS = 'stampfill:', TTL = 30 * 86400000; // remembered values expire after 30 days
+  const LS = 'stampfill:', DAYS = doc.rememberDays || 30, TTL = DAYS * 86400000; // remembered values expire after the instance's number of days
   const IMG = t => t === 'image' || t === 'signature';
   const store = {
     get(k) {
@@ -962,16 +972,24 @@ async function formView() {
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : inputs[f.key].value;
   const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? toIso(v) : v; };
   const values = () => Object.fromEntries(doc.fields.map(f => [f.key, get(f)]));
-  const HINT = { browser: t('Remembered on this device for 30 days'), url: t('Can be carried in a link'), instance: '', today: t("Today's date") };
+  const HINT = { browser: t('Remembered on this device for {n} days').replace('{n}', DAYS), url: t('Can be carried in a link'), instance: '', today: t("Today's date") };
   const today = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const toIso = v => { const m = /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/.exec(String(v).trim()); return m ? m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0') : v; };
 
   const form = h('div', { class: 'panel' });
-  let lastGroup = '';
-  const groupHead = f => { if (f.hidden) return; const g = f.group || ''; if (g === lastGroup) return; lastGroup = g; form.append(g ? h('h2', { class: 'fgroup' }, g) : h('hr', { class: 'fsep' })); }; // a heading per group, a rule where loose fields follow one
+  // groups are framed, foldable blocks; a group starts folded when the editor says so, unless this browser remembers the visitor's own choice
+  const remembered = doc.rememberGroups ? store.get('groups:' + slug) : null, gmem = remembered && typeof remembered === 'object' ? remembered : {};
+  const section = g => {
+    const sec = h('section', { class: 'fgrp' + ((g in gmem ? gmem[g] : doc.collapsed.includes(g)) ? ' closed' : '') }), body = h('div', { class: 'gbody' });
+    const tog = h('button', { type: 'button', class: 'gtog', onclick: () => { const closed = sec.classList.toggle('closed'); tog.setAttribute('aria-expanded', String(!closed)); if (doc.rememberGroups) { gmem[g] = closed; store.set('groups:' + slug, gmem); } } }, g);
+    tog.setAttribute('aria-expanded', String(!sec.classList.contains('closed')));
+    sec.append(h('h2', { class: 'fgroup' }, tog), body); form.append(sec); return body;
+  };
+  let box = form, boxGroup = '';
+  const place = f => { if (f.hidden) return box; const g = f.group || ''; if (g !== boxGroup) { boxGroup = g; box = g ? section(g) : form; } return box; }; // hidden fields never open a group
   for (const f of doc.fields) {
-    groupHead(f);
-    if (IMG(f.type)) { form.append(rows[f.key] = imageRow(f)); continue; }
+    const at = place(f);
+    if (IMG(f.type)) { at.append(rows[f.key] = imageRow(f)); continue; }
     const inp = inputs[f.key] = f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : f.type === 'date' ? 'date' : 'text' });
     inp.id = 'f_' + f.key;
     const saved = f.prefill === 'browser' ? store.get(f.key) : null;
@@ -981,7 +999,7 @@ async function formView() {
     rows[f.key] = f.type === 'checkbox'
       ? h('div', {}, h('label', { class: 'chk', style: 'margin-top:12px' }, inp, name), HINT[f.prefill] && h('div', { class: 'hint' }, HINT[f.prefill]))
       : h('div', {}, h('label', { htmlFor: inp.id }, name), inp, HINT[f.prefill] && h('div', { class: 'hint' }, HINT[f.prefill]));
-    form.append(rows[f.key]);
+    at.append(rows[f.key]);
   }
   for (const f of doc.fields) if (f.hidden && rows[f.key]) rows[f.key].style.display = 'none'; // hidden fields keep their value and are still printed
   if (doc.fields.length && doc.fields.every(f => f.hidden)) form.append(h('p', { class: 'muted' }, t('Nothing to fill in here — just print or download.')));
@@ -1004,7 +1022,7 @@ async function formView() {
     st.set(saved || '');
     const hint = f.prefill === 'instance' && f.value ? t('A default image is provided; you can replace it') : f.prefill === 'browser' ? '' : HINT[f.prefill];
     return h('div', {}, h('label', { htmlFor: file.id }, f.label + (f.required ? ' *' : '')), h('div', { class: 'imgbox' }, thumb, h('div', { class: 'row' }, draw, pick, clear, file)),
-      rem && h('label', { class: 'chk small', style: 'margin-top:6px' }, rem, t('Remember on this device (30 days)')), hint && h('div', { class: 'hint' }, hint));
+      rem && h('label', { class: 'chk small', style: 'margin-top:6px' }, rem, t('Remember on this device ({n} days)').replace('{n}', DAYS)), hint && h('div', { class: 'hint' }, hint));
   }
   // a drawing pad for signatures: pointer and touch, smoothed strokes, trimmed to the ink with a transparent background
   function sigPad(done) {
@@ -1058,7 +1076,7 @@ async function formView() {
   function schedule() { clearTimeout(timer); timer = setTimeout(() => refresh().catch(fail), 200); }
   function complete() {
     const miss = doc.fields.filter(f => f.required && !f.hidden && !get(f) && !(IMG(f.type) && f.prefill === 'instance' && f.value));
-    miss.forEach(f => rows[f.key].classList.add('bad'));
+    miss.forEach(f => { rows[f.key].classList.add('bad'); const sec = rows[f.key].closest('.fgrp.closed'); if (sec) sec.querySelector('.gtog').click(); }); // a folded group opens to show what is missing
     if (miss.length) { toast(t('Please fill in: ') + miss.map(f => f.label).join(', '), true); inputs[miss[0].key].focus(); }
     return !miss.length;
   }
@@ -1199,12 +1217,15 @@ async function settingsView() {
   const title = h('input', { type: 'text', value: s.siteTitle }), purl = h('input', { type: 'url', value: s.printerUrl, placeholder: 'http://cups-host:631/printers/NAME' });
   const pub = h('input', { type: 'checkbox', checked: s.publicPrint }), pbtn = h('input', { type: 'text', value: s.printButton, placeholder: 'Print at home', maxLength: 40 });
   const ptest = h('div', { class: 'hint', id: 'ptest' });
+  const remDays = h('input', { type: 'number', id: 'remDays', min: 1, max: 3650, step: 1, value: s.rememberDays || 30, style: 'width:140px' });
   const langSel = h('select', { id: 'defLang' }, Object.entries(LANGS).map(([k, n]) => h('option', { value: k, selected: (s.language || 'en') === k }, n)));
   const cur = h('input', { type: 'password', autocomplete: 'current-password' }), nxt = h('input', { type: 'password', autocomplete: 'new-password' });
   app.append(h('h1', {}, t('Settings')), h('div', { class: 'panel', style: 'max-width:560px' },
     h('label', {}, t('Site title')), title,
     h('label', {}, t('Default language')), langSel,
     h('div', { class: 'hint' }, t('Used when a visitor\'s browser language is not available. Everyone can switch languages in the header.')),
+    h('label', {}, t('Days remembered values are kept in the browser')), remDays,
+    h('div', { class: 'hint' }, t('Values a form remembers on a device expire after this many days; 30 by default.')),
     h('label', {}, t('Network printer (IPP / CUPS URL, optional)')), h('div', { class: 'row' }, h('div', { class: 'grow' }, purl), h('button', { onclick: async e => {
       const b = e.currentTarget; b.disabled = true; ptest.className = 'hint'; ptest.textContent = t('Asking the printer…');
       try {
@@ -1218,7 +1239,7 @@ async function settingsView() {
     h('div', { class: 'hint' }, t('Adds a button to every form that prints on this printer from the server. The printer must accept PDF; a CUPS queue converts for printers that do not. Each document can switch the button off.')),
     h('label', {}, t('Label of that button')), pbtn,
     h('label', { class: 'chk', style: 'margin-top:12px' }, pub, t('Let everyone with a document link use this printer (otherwise only while logged in as admin)')),
-    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value, language: langSel.value }); toast(t('Saved')); } catch (e) { fail(e); } } }, t('Save settings')))),
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'pri', onclick: async () => { try { await api('PUT', '/api/admin/settings', { siteTitle: title.value, printerUrl: purl.value, publicPrint: pub.checked, printButton: pbtn.value, language: langSel.value, rememberDays: remDays.value }); toast(t('Saved')); } catch (e) { fail(e); } } }, t('Save settings')))),
     h('h2', {}, t('Sessions')),
     h('div', { class: 'panel', style: 'max-width:560px' },
       h('p', { class: 'muted small', style: 'margin:0 0 10px' }, t('Admin sessions last 12 hours of inactivity. Signing out everywhere also closes every unlocked form in every browser.')),
@@ -1319,6 +1340,7 @@ async function editView(id) {
   const readable = s => /^[a-z0-9-]+$/.test(s) ? s : ''; let slugInit = readable(d.slug); // random links are not shown as a name
   const slugIn = h('input', { type: 'text', id: 'slugIn', value: slugInit, spellcheck: false, placeholder: t('empty = random link'), oninput: () => { link.value = location.origin + '/d/' + (slugOf(slugIn.value) || '(random)'); mark(); } });
   const allowPrint = h('input', { type: 'checkbox', checked: d.serverPrint !== false, onchange: mark });
+  const rememberGroups = h('input', { type: 'checkbox', checked: d.rememberGroups !== false, onchange: mark });
   let dropPw = false;
   const pwIn = h('input', { type: 'text', autocomplete: 'off', spellcheck: false, placeholder: d.protected ? t('Password set — type a new one to change it') : t('No password'), oninput: () => { dropPw = false; mark(); } });
   const pwDrop = h('button', { class: 'small', style: d.protected ? '' : 'display:none', onclick: () => { dropPw = true; pwIn.value = ''; pwIn.placeholder = t('Password will be removed on save'); mark(); } }, t('Remove'));
@@ -1333,7 +1355,7 @@ async function editView(id) {
   } });
   async function save() {
     try {
-      const body = { title: title.value, description: desc.value, tags: tags.value.split(','), listed: listed.checked, serverPrint: allowPrint.checked, rotation: d.rotation, fields: d.fields };
+      const body = { title: title.value, description: desc.value, tags: tags.value.split(','), listed: listed.checked, serverPrint: allowPrint.checked, rotation: d.rotation, fields: d.fields, collapsed: d.collapsed || [], rememberGroups: rememberGroups.checked };
       if (slugIn.value !== slugInit) body.slug = slugIn.value;
       if (dropPw) body.password = ''; else if (pwIn.value) body.password = pwIn.value;
       d = await api('PUT', '/api/admin/docs/' + id, body);
@@ -1351,7 +1373,7 @@ async function editView(id) {
     const rest = d.fields.filter(x => x !== f); f.group = group; rest.splice(rest.indexOf(before), 0, f); d.fields = rest; commit(blocks());
   };
   const dropGroup = (g, beforeBlock) => { const bs = blocks(), from = bs.findIndex(b => b[0].group === g); if (from < 0 || bs[from] === beforeBlock) return; const [b] = bs.splice(from, 1); bs.splice(bs.indexOf(beforeBlock), 0, b); commit(bs); };
-  const renameGroup = (g) => { const v = prompt(t('Group name (empty removes the group)'), g); if (v == null) return; d.fields.forEach(f => { if (f.group === g) f.group = v.trim().slice(0, 40); }); commit(blocks()); };
+  const renameGroup = (g) => { const r = prompt(t('Group name (empty removes the group)'), g); if (r == null) return; const v = r.trim().slice(0, 40); d.fields.forEach(f => { if (f.group === g) f.group = v; }); d.collapsed = (d.collapsed || []).map(x => x === g ? v : x).filter(Boolean); commit(blocks()); };
   const dnd = (onDrop) => ({ // drop target behaviour shared by field rows and group headings
     ondragover: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('over'); },
     ondragleave: e => e.currentTarget.classList.remove('over'),
@@ -1363,12 +1385,16 @@ async function editView(id) {
     const items = [], bs = blocks();
     bs.forEach((b, bi) => {
       const g = b[0].group || '', grouped = !!g;
-      if (grouped) items.push(h('div', { class: 'fgroup', draggable: true, ondragstart: dragStart({ group: g }), ...dnd(dg => dg.field ? dropField(dg.field, b[0], g) : dropGroup(dg.group, b)) },
-        h('span', { class: 'grip', title: t('Drag to reorder') }, '⋮⋮'), h('span', { class: 'gname' }, g),
+      const closed = grouped && (d.collapsed || []).includes(g);
+      if (grouped) items.push(h('div', { class: 'fgroup' + (closed ? ' closed' : ''), draggable: true, ondragstart: dragStart({ group: g }), ...dnd(dg => dg.field ? dropField(dg.field, b[0], g) : dropGroup(dg.group, b)) },
+        h('span', { class: 'grip', title: t('Drag to reorder') }, '⋮⋮'),
+        h('button', { class: 'tiny gfold', title: t('Closed groups start closed on the form'), 'aria-expanded': String(!closed), onclick: () => { d.collapsed = closed ? d.collapsed.filter(x => x !== g) : [...(d.collapsed || []), g]; mark(); flist(); } }, closed ? '▸' : '▾'),
+        h('span', { class: 'gname' }, g), closed && h('span', { class: 'muted small' }, '(' + b.length + ')'),
         h('button', { class: 'tiny', title: t('Rename group'), onclick: () => renameGroup(g) }, '✎'),
         h('span', { class: 'ord' },
           h('button', { class: 'tiny', title: t('Move group up'), disabled: bi === 0, onclick: () => moveBlock(bi, -1) }, '▲'),
           h('button', { class: 'tiny', title: t('Move group down'), disabled: bi === bs.length - 1, onclick: () => moveBlock(bi, 1) }, '▼'))));
+      if (closed) return; // folded in the list as well
       b.forEach((f, i) => {
         const up = grouped ? i > 0 : bi > 0, down = grouped ? i < b.length - 1 : bi < bs.length - 1; // grouped fields move within their group, loose ones past whole groups
         const mv = delta => grouped ? moveField(bi, i, delta) : moveBlock(bi, delta);
@@ -1446,6 +1472,8 @@ async function editView(id) {
           h('label', {}, t('Title')), title, h('label', {}, t('Description')), desc, h('label', {}, t('Tags (comma-separated)')), tags,
           h('label', { class: 'chk', style: 'margin-top:12px' }, listed, t('Show in the public document list')),
           h('label', { class: 'chk', style: 'margin-top:8px' }, allowPrint, t('Allow printing on the network printer from this form')),
+          h('label', { class: 'chk', style: 'margin-top:8px' }, rememberGroups, t('Remember in the browser which groups a visitor opened or closed')),
+          h('div', { class: 'hint' }, t('Groups closed in the field list start closed on the form. Without this setting every visit starts that way.')),
           h('label', {}, t('Link name (optional)')), slugIn,
           h('div', { class: 'hint' }, t('Letters, digits and dashes give a readable link such as /d/library-card. Leave it empty for a random, unguessable link. Changing it breaks links already handed out.')),
           h('label', {}, t('Direct link')), h('div', { class: 'row' }, h('div', { class: 'grow' }, link), h('button', { onclick: () => copyText(link.value) }, t('Copy'))),

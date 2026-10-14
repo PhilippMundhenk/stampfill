@@ -92,7 +92,7 @@ jobs capped at 5 copies, and request header and body timeouts.
 ([ADR 0006](adr/0006-prefill-in-the-browser.md)) keeps that data out of the server. On a shared
 computer it was still handed to the next person. Fixed: pictures and signatures are only
 remembered after the user ticks "Remember on this device", everything remembered expires after
-30 days, the form says so next to each remembered field, and "Forget saved values" clears it all.
+30 days by default (a setting), the form says so next to each remembered field, and "Forget saved values" clears it all.
 
 ### 6 and 7. Passwords and sessions (medium, #29, #30)
 

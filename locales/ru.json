@@ -112,9 +112,9 @@
  "Printer": "Принтер",
  "Public list": "Открытый список",
  "Random link": "Случайная ссылка",
- "Remember on this device (30 days)": "Запомнить на этом устройстве (30 дней)",
+ "Remember on this device ({n} days)": "Запомнить на этом устройстве ({n} дней)",
  "Remember per user (browser)": "Запоминать для пользователя (браузер)",
- "Remembered on this device for 30 days": "Запоминается на этом устройстве на 30 дней",
+ "Remembered on this device for {n} days": "Запоминается на этом устройстве на {n} дней",
  "Remove": "Удалить",
  "Remove field": "Удалить поле",
  "Replace image": "Заменить изображение",
@@ -205,5 +205,10 @@
  "Rename group": "Переименовать группу",
  "Group name (empty removes the group)": "Название группы (пустое удаляет группу)",
  "Move group up": "Переместить группу вверх",
- "Move group down": "Переместить группу вниз"
+ "Move group down": "Переместить группу вниз",
+ "Closed groups start closed on the form": "Закрытые группы на форме изначально свёрнуты",
+ "Remember in the browser which groups a visitor opened or closed": "Запоминать в браузере, какие группы посетитель открыл или закрыл",
+ "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "Группы, закрытые в списке полей, на форме изначально свёрнуты. Без этой настройки каждый визит начинается так.",
+ "Days remembered values are kept in the browser": "Сколько дней запомненные значения хранятся в браузере",
+ "Values a form remembers on a device expire after this many days; 30 by default.": "Значения, которые форма запоминает на устройстве, удаляются через столько дней; по умолчанию 30."
 }

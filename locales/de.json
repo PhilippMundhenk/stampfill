@@ -112,9 +112,9 @@
  "Printer": "Drucker",
  "Public list": "Öffentliche Liste",
  "Random link": "Zufälliger Link",
- "Remember on this device (30 days)": "Auf diesem Gerät merken (30 Tage)",
+ "Remember on this device ({n} days)": "Auf diesem Gerät merken ({n} Tage)",
  "Remember per user (browser)": "Pro Nutzer merken (Browser)",
- "Remembered on this device for 30 days": "Auf diesem Gerät 30 Tage gemerkt",
+ "Remembered on this device for {n} days": "Auf diesem Gerät {n} Tage gemerkt",
  "Remove": "Entfernen",
  "Remove field": "Feld entfernen",
  "Replace image": "Bild ersetzen",
@@ -205,5 +205,10 @@
  "Rename group": "Gruppe umbenennen",
  "Group name (empty removes the group)": "Gruppenname (leer entfernt die Gruppe)",
  "Move group up": "Gruppe nach oben",
- "Move group down": "Gruppe nach unten"
+ "Move group down": "Gruppe nach unten",
+ "Closed groups start closed on the form": "Geschlossene Gruppen sind auf dem Formular zunächst geschlossen",
+ "Remember in the browser which groups a visitor opened or closed": "Im Browser merken, welche Gruppen ein Besucher geöffnet oder geschlossen hat",
+ "Groups closed in the field list start closed on the form. Without this setting every visit starts that way.": "In der Feldliste geschlossene Gruppen sind auf dem Formular zunächst geschlossen. Ohne diese Einstellung beginnt jeder Besuch so.",
+ "Days remembered values are kept in the browser": "Tage, die gemerkte Werte im Browser bleiben",
+ "Values a form remembers on a device expire after this many days; 30 by default.": "Werte, die ein Formular auf einem Gerät merkt, verfallen nach so vielen Tagen; standardmäßig 30."
 }
