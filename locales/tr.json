@@ -194,5 +194,16 @@
  "Move down": "Aşağı taşı",
  "Image unreadable or too large (at most 8 megapixels)": "Resim okunamıyor veya çok büyük (en fazla 8 megapiksel)",
  "Install as app": "Uygulama olarak yükle",
- "Adds this form to your home screen or desktop": "Bu formu ana ekrana veya masaüstüne ekler"
+ "Adds this form to your home screen or desktop": "Bu formu ana ekrana veya masaüstüne ekler",
+ "Installed, this form sits on your home screen or desktop and opens directly, like an app.": "Yüklendiğinde bu form ana ekranınızda veya masaüstünüzde yer alır ve bir uygulama gibi doğrudan açılır.",
+ "In Safari, tap the Share button and then \"Add to Home Screen\".": "Safari’de Paylaş düğmesine, ardından \"Ana Ekrana Ekle\"ye dokunun.",
+ "Open the browser menu (⋮) and choose \"Install app\" or \"Add to Home screen\".": "Tarayıcı menüsünü (⋮) açın ve \"Uygulamayı yükle\" veya \"Ana ekrana ekle\"yi seçin.",
+ "In Safari, choose File › \"Add to Dock\".": "Safari’de Dosya › \"Dock’a Ekle\"yi seçin.",
+ "Firefox on the desktop does not install web apps on its own. Use Chrome, Edge or Safari for this, or bookmark the link.": "Masaüstü Firefox web uygulamalarını kendi başına yüklemez. Bunun için Chrome, Edge veya Safari kullanın ya da bağlantıyı yer imlerine ekleyin.",
+ "Click the install icon at the right end of the address bar, or open the browser menu and choose \"Install\".": "Adres çubuğunun sağ ucundaki yükleme simgesine tıklayın veya tarayıcı menüsünü açıp \"Yükle\"yi seçin.",
+ "Close": "Kapat",
+ "Rename group": "Grubu yeniden adlandır",
+ "Group name (empty removes the group)": "Grup adı (boş bırakılırsa grup kaldırılır)",
+ "Move group up": "Grubu yukarı taşı",
+ "Move group down": "Grubu aşağı taşı"
 }

@@ -102,5 +102,5 @@ sudo systemctl status stampfill
 
 The unit in `deploy/systemd/stampfill.service` runs as the `stampfill` user with a read-only
 filesystem except the data directory, and restarts on failure. Put nginx, Caddy or Traefik in
-front for HTTPS (see the README for the proxy headers) and keep port 8080 bound to localhost by
+front for HTTPS (see docs/deploy.md for the proxy headers) and keep port 8080 bound to localhost by
 setting `HOST=127.0.0.1` in `/etc/stampfill.env`.

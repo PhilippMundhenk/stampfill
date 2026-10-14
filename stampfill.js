@@ -246,9 +246,18 @@ function toIso(v, fmt) {
 }
 const slugOf = (s) => str(s, 80).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 const keyOf = (s) => str(s, 60).toLowerCase().normalize('NFKD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'field';
+// named groups form contiguous blocks on the form, placed where their first field is; ungrouped fields stay where they are
+function groupOrder(fields) {
+  const out = [], blocks = new Map();
+  for (const f of fields) {
+    const g = f.group || '';
+    if (g && blocks.has(g)) blocks.get(g).push(f); else { const b = [f]; if (g) blocks.set(g, b); out.push(b); }
+  }
+  return out.flat();
+}
 function cleanFields(list, pages) {
   const seen = new Set();
-  return (Array.isArray(list) ? list : []).filter((f) => f && typeof f === 'object').slice(0, 200).map((f) => {
+  return groupOrder((Array.isArray(list) ? list : []).filter((f) => f && typeof f === 'object').slice(0, 200).map((f) => {
     let key = keyOf(f.key || f.label), base = key, i = 2;
     while (seen.has(key)) key = base + '_' + i++;
     seen.add(key);
@@ -263,7 +272,7 @@ function cleanFields(list, pages) {
       height: num(f.height, 0, 0, 5000), // images only: 0 = follows the image, otherwise the image fits into width x height
       dateFormat, prefill, value: type === 'date' ? toIso(str(f.value, 40), dateFormat) : IMG(type) ? (IMG_NAME.test(f.value) ? f.value : '') : str(f.value, 2000),
     };
-  });
+  }));
 }
 // per-page rotation in degrees (any angle, e.g. to straighten a skewed scan), applied when rendering
 const cleanRotation = (r, pages) => Array.from({ length: pages }, (_, i) => Math.round(num(Array.isArray(r) ? r[i] : 0, 0, -180, 180) * 10) / 10 || 0);
@@ -370,7 +379,7 @@ function readTemplate(id) {
 const IPP_STATUS = {
   0x0400: 'bad request', 0x0401: 'forbidden', 0x0402: 'not authenticated', 0x0403: 'not authorized', 0x0404: 'not possible', 0x0405: 'timeout',
   0x0406: 'not found — check the path of the printer URL', 0x0407: 'gone', 0x0408: 'request too large', 0x0409: 'request value too long',
-  0x040a: 'document format not supported — this printer does not accept PDF over IPP; print through a CUPS queue (see README)',
+  0x040a: 'document format not supported — this printer does not accept PDF over IPP; print through a CUPS queue (see docs/printing.md)',
   0x040b: 'attributes or values not supported', 0x040c: 'URI scheme not supported', 0x040d: 'charset not supported', 0x040e: 'conflicting attributes',
   0x0500: 'internal printer error', 0x0501: 'operation not supported', 0x0502: 'service unavailable', 0x0503: 'IPP version not supported',
   0x0504: 'device error', 0x0505: 'temporary error', 0x0506: 'the printer is not accepting jobs', 0x0507: 'the printer is busy', 0x0508: 'job canceled',
@@ -686,7 +695,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -770,7 +779,8 @@ details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([o
 .flist{border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;background:var(--card)}
 .fgroup{padding:5px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);background:var(--bg);border-bottom:1px solid var(--line)}
 h2.fgroup{padding:0;background:none;border:0;margin:18px 0 2px;font-size:12px}
-.fitem.over{box-shadow:inset 0 2px 0 var(--acc)}.grip{color:var(--mut);cursor:grab;font-size:13px;letter-spacing:-3px;user-select:none}
+.fitem.over,.flist .fgroup.over{box-shadow:inset 0 2px 0 var(--acc)}.flist .fgroup{display:flex;align-items:center;gap:8px}.flist .fgroup .gname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.flist .fgroup .grip{cursor:grab}.fitem.ing{padding-left:22px}
+.fsep{border:0;border-top:1px solid var(--line);margin:18px 0 4px}#installBtn{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}#installBtn .ico{display:inline-flex}.grip{color:var(--mut);cursor:grab;font-size:13px;letter-spacing:-3px;user-select:none}
 .ord{display:flex;gap:2px}.ord button.tiny{padding:0 5px;font-size:9px;line-height:18px;box-shadow:none}
 .fitem{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s}.fitem:hover{background:var(--bg)}
 .fitem:last-child{border-bottom:0}.fitem.on{background:var(--acc-soft);box-shadow:inset 3px 0 0 var(--acc)}.fitem b{flex:1;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -779,7 +789,7 @@ h2.fgroup{padding:0;background:none;border:0;margin:18px 0 2px;font-size:12px}
 #toast.show{opacity:1;transform:translate(-50%,0)}#toast.bad{background:var(--bad);color:#fff}
 #printArea{display:none}
 @media(max-width:1000px){.editor{grid-template-columns:1fr;grid-template-areas:"doc" "stage" "fields"}.ed-stage{position:static;max-height:none}}
-@media(max-width:860px){.split{grid-template-columns:1fr}main{padding:16px 16px 40px}h1{font-size:22px}header{padding:10px 16px}.panel{padding:16px}
+@media(max-width:860px){#installBtn span{display:none}#installBtn{padding:6px 8px}.split{grid-template-columns:1fr}main{padding:16px 16px 40px}h1{font-size:22px}header{padding:10px 16px}.panel{padding:16px}
 .actions{position:sticky;bottom:0;z-index:3;margin:16px -16px -16px;padding:12px 16px;background:var(--hdr);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-radius:0 0 var(--r) var(--r)}
 .actions button{flex:1}#toast{bottom:max(16px,env(safe-area-inset-bottom))}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -909,7 +919,28 @@ async function formView() {
   document.head.append(h('link', { rel: 'manifest', href: '/d/' + slug + '/manifest.webmanifest' }), h('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' }), h('meta', { name: 'apple-mobile-web-app-title', content: doc.title }));
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   let installPrompt = null;
-  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; const b = $('#installBtn'); if (b) b.style.display = ''; });
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
+  const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; // already running as an app
+  const installIcon = () => { const i = h('span', { class: 'ico' }); i.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg>'; return i; };
+  const installBtn = h('button', { id: 'installBtn', class: 'small', title: t('Adds this form to your home screen or desktop'), onclick: async () => {
+    if (installPrompt) { const p = installPrompt; installPrompt = null; p.prompt(); const c = await p.userChoice.catch(() => null); if (c && c.outcome === 'accepted') installBtn.remove(); return; }
+    installHelp(); // the browser made no offer (or it was used already): explain the manual way
+  } }, installIcon(), h('span', {}, t('Install as app')));
+  if (!installed()) $('header').append(installBtn);
+  window.addEventListener('appinstalled', () => installBtn.remove());
+  function installHelp() {
+    const ua = navigator.userAgent, ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const chromium = /Chrome|Chromium|Edg/.test(ua), android = /Android/.test(ua), safari = /Safari/.test(ua) && !chromium && !ios, firefox = /Firefox/.test(ua);
+    const how = ios ? t('In Safari, tap the Share button and then "Add to Home Screen".')
+      : android ? t('Open the browser menu (⋮) and choose "Install app" or "Add to Home screen".')
+      : safari ? t('In Safari, choose File › "Add to Dock".')
+      : firefox ? t('Firefox on the desktop does not install web apps on its own. Use Chrome, Edge or Safari for this, or bookmark the link.')
+      : t('Click the install icon at the right end of the address bar, or open the browser menu and choose "Install".');
+    const dlg = h('dialog', { class: 'sigdlg helpdlg' }, h('h2', {}, t('Install as app')),
+      h('p', {}, t('Installed, this form sits on your home screen or desktop and opens directly, like an app.')), h('p', {}, how),
+      h('div', { class: 'row', style: 'margin-top:12px' }, h('span', { class: 'grow' }), h('button', { class: 'pri', onclick: () => dlg.close() }, t('Close'))));
+    dlg.addEventListener('close', () => dlg.remove()); document.body.append(dlg); dlg.showModal();
+  }
   // values from the link: only #key=value, which never leaves the browser (a query string would reach server and proxy logs)
   const fromUrl = new URLSearchParams(location.hash.slice(1));
   const LS = 'stampfill:', TTL = 30 * 86400000; // remembered values expire after 30 days
@@ -937,7 +968,7 @@ async function formView() {
 
   const form = h('div', { class: 'panel' });
   let lastGroup = '';
-  const groupHead = f => { const g = f.hidden ? lastGroup : (f.group || ''); if (g === lastGroup) return; lastGroup = g; if (g) form.append(h('h2', { class: 'fgroup' }, g)); };
+  const groupHead = f => { if (f.hidden) return; const g = f.group || ''; if (g === lastGroup) return; lastGroup = g; form.append(g ? h('h2', { class: 'fgroup' }, g) : h('hr', { class: 'fsep' })); }; // a heading per group, a rule where loose fields follow one
   for (const f of doc.fields) {
     groupHead(f);
     if (IMG(f.type)) { form.append(rows[f.key] = imageRow(f)); continue; }
@@ -1088,7 +1119,6 @@ async function formView() {
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
       h('button', { class: 'pri', onclick: guard(browserPrint) }, t('Print')),
-      h('button', { id: 'installBtn', class: 'small', style: installPrompt ? '' : 'display:none', title: t('Adds this form to your home screen or desktop'), onclick: async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice.catch(() => {}); installPrompt = null; $('#installBtn').style.display = 'none'; } }, t('Install as app')),
       doc.serverPrint && h('button', { onclick: guard(serverPrint) }, doc.printLabel || 'Print at home'),
       h('button', { onclick: guard(download) }, t('Download PDF'))),
     (has('url') || has('browser')) && h('div', { class: 'row', style: 'margin-top:10px' },
@@ -1310,26 +1340,47 @@ async function editView(id) {
       dirty = false; saveBtn.textContent = t('Saved'); saveBtn.disabled = true; afterSave(); side(); toast(t('Saved'));
     } catch (e) { fail(e); }
   }
-  let dragId = null;
-  function move(f, delta) { const i = d.fields.indexOf(f), j = i + delta; if (j < 0 || j >= d.fields.length) return; d.fields.splice(i, 1); d.fields.splice(j, 0, f); mark(); flist(); }
+  let dragging = null; // { field: id } or { group: name } while something from the list is being dragged
+  const blocks = () => { const out = [], at = new Map(); for (const f of d.fields) { const g = f.group || ''; if (g && at.has(g)) at.get(g).push(f); else { const b = [f]; if (g) at.set(g, b); out.push(b); } } return out; }; // same rule as the server: a named group is one block, a loose field its own
+  const commit = (bs) => { d.fields = bs.flat(); mark(); side(); };
+  const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+  const moveBlock = (bi, delta) => { const bs = blocks(); if (swap(bs, bi, bi + delta)) commit(bs); }; // a group, or a loose field, changes place with its neighbour block
+  const moveField = (bi, i, delta) => { const bs = blocks(); if (swap(bs[bi], i, i + delta)) commit(bs); }; // within its group
+  const dropField = (id, before, group) => { // the dragged field lands in front of the target and joins that field's group
+    const f = d.fields.find(x => x.id === id); if (!f || f === before) return;
+    const rest = d.fields.filter(x => x !== f); f.group = group; rest.splice(rest.indexOf(before), 0, f); d.fields = rest; commit(blocks());
+  };
+  const dropGroup = (g, beforeBlock) => { const bs = blocks(), from = bs.findIndex(b => b[0].group === g); if (from < 0 || bs[from] === beforeBlock) return; const [b] = bs.splice(from, 1); bs.splice(bs.indexOf(beforeBlock), 0, b); commit(bs); };
+  const renameGroup = (g) => { const v = prompt(t('Group name (empty removes the group)'), g); if (v == null) return; d.fields.forEach(f => { if (f.group === g) f.group = v.trim().slice(0, 40); }); commit(blocks()); };
+  const dnd = (onDrop) => ({ // drop target behaviour shared by field rows and group headings
+    ondragover: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; e.currentTarget.classList.add('over'); },
+    ondragleave: e => e.currentTarget.classList.remove('over'),
+    ondrop: e => { e.preventDefault(); e.currentTarget.classList.remove('over'); const dg = dragging; dragging = null; if (dg) onDrop(dg); },
+    ondragend: () => { dragging = null; } });
+  const dragStart = (what) => e => { dragging = what; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', what.field || what.group); };
   function flist() { // the order here is the order on the form; groups become headings there
     if (!d.fields.length) { fieldsBox.replaceChildren(h('p', { class: 'empty small' }, t('No fields yet. Double-click on the page where the text should go, or use "Add field".'))); return; }
-    const items = []; let last = null;
-    d.fields.forEach((f, i) => {
-      const g = f.group || '';
-      if (g !== last) { last = g; if (g) items.push(h('div', { class: 'fgroup' }, g)); }
-      const it = h('div', { class: 'fitem' + (f.id === sel ? ' on' : ''), draggable: true,
-        onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); },
-        ondragstart: e => { dragId = f.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', f.id); },
-        ondragover: e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; it.classList.add('over'); },
-        ondragleave: () => it.classList.remove('over'),
-        ondrop: e => { e.preventDefault(); it.classList.remove('over'); const from = d.fields.findIndex(x => x.id === dragId); dragId = null; if (from < 0 || d.fields[from] === f) return; const [mv] = d.fields.splice(from, 1); d.fields.splice(d.fields.indexOf(f), 0, mv); mark(); flist(); } },
-        h('span', { class: 'grip', title: t('Drag to reorder') }, '⋮⋮'), h('b', {}, f.label),
-        f.type === 'static' ? h('span', { class: 'tag' }, t('fixed text')) : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page),
+    const items = [], bs = blocks();
+    bs.forEach((b, bi) => {
+      const g = b[0].group || '', grouped = !!g;
+      if (grouped) items.push(h('div', { class: 'fgroup', draggable: true, ondragstart: dragStart({ group: g }), ...dnd(dg => dg.field ? dropField(dg.field, b[0], g) : dropGroup(dg.group, b)) },
+        h('span', { class: 'grip', title: t('Drag to reorder') }, '⋮⋮'), h('span', { class: 'gname' }, g),
+        h('button', { class: 'tiny', title: t('Rename group'), onclick: () => renameGroup(g) }, '✎'),
         h('span', { class: 'ord' },
-          h('button', { class: 'tiny', title: t('Move up'), disabled: i === 0, onclick: e => { e.stopPropagation(); move(f, -1); } }, '▲'),
-          h('button', { class: 'tiny', title: t('Move down'), disabled: i === d.fields.length - 1, onclick: e => { e.stopPropagation(); move(f, 1); } }, '▼')));
-      items.push(it);
+          h('button', { class: 'tiny', title: t('Move group up'), disabled: bi === 0, onclick: () => moveBlock(bi, -1) }, '▲'),
+          h('button', { class: 'tiny', title: t('Move group down'), disabled: bi === bs.length - 1, onclick: () => moveBlock(bi, 1) }, '▼'))));
+      b.forEach((f, i) => {
+        const up = grouped ? i > 0 : bi > 0, down = grouped ? i < b.length - 1 : bi < bs.length - 1; // grouped fields move within their group, loose ones past whole groups
+        const mv = delta => grouped ? moveField(bi, i, delta) : moveBlock(bi, delta);
+        items.push(h('div', { class: 'fitem' + (f.id === sel ? ' on' : '') + (grouped ? ' ing' : ''), draggable: true,
+          onclick: () => { sel = f.id; if (f.page !== pageNo) { pageNo = f.page; redraw().catch(fail); } side(); markers(); },
+          ondragstart: dragStart({ field: f.id }), ...dnd(dg => dg.field ? dropField(dg.field, f, g) : dropGroup(dg.group, b)) },
+          h('span', { class: 'grip', title: t('Drag to reorder') }, '⋮⋮'), h('b', {}, f.label),
+          f.type === 'static' ? h('span', { class: 'tag' }, t('fixed text')) : PRE_SHORT[f.prefill] && h('span', { class: 'tag' }, PRE_SHORT[f.prefill]), f.hidden && h('span', { class: 'tag' }, 'hidden'), h('span', { class: 'muted small' }, 'p' + f.page),
+          h('span', { class: 'ord' },
+            h('button', { class: 'tiny', title: t('Move up'), disabled: !up, onclick: e => { e.stopPropagation(); mv(-1); } }, '▲'),
+            h('button', { class: 'tiny', title: t('Move down'), disabled: !down, onclick: e => { e.stopPropagation(); mv(1); } }, '▼'))));
+      });
     });
     fieldsBox.replaceChildren(h('div', { class: 'flist' }, items));
   }
@@ -1340,7 +1391,7 @@ async function editView(id) {
     const bind = (el, prop, conv, after) => { el.addEventListener('input', () => { f[prop] = conv ? conv(el) : el.value; mark(); later(); if (after) after(); }); return el; };
     const numIn = (prop, step, min) => bind(h('input', { type: 'number', step, min, value: f[prop] }), prop, el => el.value === '' ? 0 : +el.value, markers);
     const keyIn = bind(h('input', { type: 'text', value: f.key }), 'key', el => keyOf(el.value));
-    const groupIn = bind(h('input', { type: 'text', value: f.group || '', placeholder: t('e.g. Applicant, Child, Office use') }), 'group', el => el.value.slice(0, 40), flist);
+    const groupIn = bind(h('input', { type: 'text', value: f.group || '', placeholder: t('e.g. Applicant, Child, Office use') }), 'group', el => el.value.slice(0, 40), () => { d.fields = blocks().flat(); flist(); }); // a known group name moves the field into that group's block
     groupIn.setAttribute('list', 'groups'); // suggestions from the other fields' groups
     keyIn.addEventListener('change', () => { keyIn.value = f.key; }); // show the normalised key once editing is done
     const labelIn = h('input', { type: 'text', value: f.label });

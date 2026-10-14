@@ -194,5 +194,16 @@
  "Move down": "Nach unten",
  "Image unreadable or too large (at most 8 megapixels)": "Bild nicht lesbar oder zu groß (höchstens 8 Megapixel)",
  "Install as app": "Als App installieren",
- "Adds this form to your home screen or desktop": "Legt dieses Formular auf den Startbildschirm oder Desktop"
+ "Adds this form to your home screen or desktop": "Legt dieses Formular auf den Startbildschirm oder Desktop",
+ "Installed, this form sits on your home screen or desktop and opens directly, like an app.": "Installiert liegt dieses Formular auf dem Startbildschirm oder Desktop und öffnet sich direkt, wie eine App.",
+ "In Safari, tap the Share button and then \"Add to Home Screen\".": "Tippen Sie in Safari auf „Teilen“ und dann auf „Zum Home-Bildschirm“.",
+ "Open the browser menu (⋮) and choose \"Install app\" or \"Add to Home screen\".": "Öffnen Sie das Browsermenü (⋮) und wählen Sie „App installieren“ oder „Zum Startbildschirm hinzufügen“.",
+ "In Safari, choose File › \"Add to Dock\".": "Wählen Sie in Safari „Ablage“ › „Zum Dock hinzufügen“.",
+ "Firefox on the desktop does not install web apps on its own. Use Chrome, Edge or Safari for this, or bookmark the link.": "Firefox auf dem Desktop installiert Web-Apps nicht von selbst. Verwenden Sie dafür Chrome, Edge oder Safari oder legen Sie ein Lesezeichen an.",
+ "Click the install icon at the right end of the address bar, or open the browser menu and choose \"Install\".": "Klicken Sie auf das Installationssymbol rechts in der Adressleiste oder öffnen Sie das Browsermenü und wählen Sie „Installieren“.",
+ "Close": "Schließen",
+ "Rename group": "Gruppe umbenennen",
+ "Group name (empty removes the group)": "Gruppenname (leer entfernt die Gruppe)",
+ "Move group up": "Gruppe nach oben",
+ "Move group down": "Gruppe nach unten"
 }

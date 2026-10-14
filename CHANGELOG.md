@@ -10,6 +10,19 @@ All notable changes to this project are documented here. The format follows
 - Every form can be installed as a progressive web app that opens that form directly: per-document
   web app manifest with a limited scope, generated icons, an "Install as app" button and a small
   service worker that keeps the page shell and pdf.js available offline.
+- The install button sits in the form's header and is always offered. Where the browser makes no
+  install offer (Safari, Firefox, an already used offer) it explains the manual way for that
+  browser; it disappears once the form runs as an installed app. (#57)
+- Groups can be ordered: in the editor's field list a group is a block with its own move buttons
+  and drag handle, grouped fields move within their group, loose fields move past whole groups,
+  a field dropped on another joins that field's group, and groups can be renamed in one go. The
+  form shows a rule where loose fields follow a group. (#56)
+
+### Changed
+- Fields of one group are always kept together, at the position of the group's first field.
+  Existing documents are reordered that way on start; the relative order within a group is kept.
+- The README is a short overview again; deployment, printing and the screenshots moved to
+  `docs/deploy.md`, `docs/printing.md` and `docs/screenshots.md`. (#58)
 
 ## [1.1.0] - 2026-10-14
 

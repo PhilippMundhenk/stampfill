@@ -44,6 +44,12 @@ test('fields keep their order and carry a trimmed group name', () => {
   assert.equal(out[0].group, 'Applicant'); assert.equal(out[1].group.length, 40); assert.equal(out[2].group, '');
 });
 
+test('named groups become contiguous blocks; loose fields keep their place', () => {
+  const out = app.cleanFields([{ label: 'A', group: 'G1' }, { label: 'B' }, { label: 'C', group: 'G2' }, { label: 'D', group: 'G1' }, { label: 'E' }, { label: 'F', group: 'G2' }], 1);
+  assert.deepEqual(out.map((f) => f.label), ['A', 'D', 'B', 'C', 'F', 'E']);
+  assert.deepEqual(app.groupOrder([]), []);
+});
+
 test('hidden fields are never required; static fields are never hidden', () => {
   const [a, b] = app.cleanFields([{ label: 'A', hidden: true, required: true }, { label: 'B', type: 'static', hidden: true, value: 'x' }], 1);
   assert.equal(a.hidden, true); assert.equal(a.required, false);

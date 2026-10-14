@@ -194,5 +194,16 @@
  "Move down": "نقل لأسفل",
  "Image unreadable or too large (at most 8 megapixels)": "الصورة غير قابلة للقراءة أو كبيرة جدًا (8 ميغابكسل كحد أقصى)",
  "Install as app": "تثبيت كتطبيق",
- "Adds this form to your home screen or desktop": "يضيف هذا النموذج إلى الشاشة الرئيسية أو سطح المكتب"
+ "Adds this form to your home screen or desktop": "يضيف هذا النموذج إلى الشاشة الرئيسية أو سطح المكتب",
+ "Installed, this form sits on your home screen or desktop and opens directly, like an app.": "بعد التثبيت يظهر هذا النموذج على الشاشة الرئيسية أو سطح المكتب ويُفتح مباشرة كتطبيق.",
+ "In Safari, tap the Share button and then \"Add to Home Screen\".": "في Safari، اضغط على زر المشاركة ثم على \"إضافة إلى الشاشة الرئيسية\".",
+ "Open the browser menu (⋮) and choose \"Install app\" or \"Add to Home screen\".": "افتح قائمة المتصفح (⋮) واختر \"تثبيت التطبيق\" أو \"إضافة إلى الشاشة الرئيسية\".",
+ "In Safari, choose File › \"Add to Dock\".": "في Safari اختر \"ملف\" › \"إضافة إلى Dock\".",
+ "Firefox on the desktop does not install web apps on its own. Use Chrome, Edge or Safari for this, or bookmark the link.": "لا يثبّت Firefox على سطح المكتب تطبيقات الويب بنفسه. استخدم Chrome أو Edge أو Safari لذلك، أو احفظ الرابط كإشارة مرجعية.",
+ "Click the install icon at the right end of the address bar, or open the browser menu and choose \"Install\".": "انقر على رمز التثبيت في الطرف الأيمن من شريط العناوين، أو افتح قائمة المتصفح واختر \"تثبيت\".",
+ "Close": "إغلاق",
+ "Rename group": "إعادة تسمية المجموعة",
+ "Group name (empty removes the group)": "اسم المجموعة (فارغ لإزالة المجموعة)",
+ "Move group up": "نقل المجموعة لأعلى",
+ "Move group down": "نقل المجموعة لأسفل"
 }

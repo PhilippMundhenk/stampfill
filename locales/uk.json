@@ -194,5 +194,16 @@
  "Move down": "Вниз",
  "Image unreadable or too large (at most 8 megapixels)": "Зображення нечитабельне або завелике (не більше 8 мегапікселів)",
  "Install as app": "Встановити як застосунок",
- "Adds this form to your home screen or desktop": "Додає цю форму на головний екран або робочий стіл"
+ "Adds this form to your home screen or desktop": "Додає цю форму на головний екран або робочий стіл",
+ "Installed, this form sits on your home screen or desktop and opens directly, like an app.": "Після встановлення ця форма з’явиться на головному екрані або робочому столі й відкриватиметься одразу, як застосунок.",
+ "In Safari, tap the Share button and then \"Add to Home Screen\".": "У Safari натисніть кнопку «Поділитися», а потім «На початковий екран».",
+ "Open the browser menu (⋮) and choose \"Install app\" or \"Add to Home screen\".": "Відкрийте меню браузера (⋮) і виберіть «Установити застосунок» або «Додати на головний екран».",
+ "In Safari, choose File › \"Add to Dock\".": "У Safari виберіть «Файл» › «Додати в Dock».",
+ "Firefox on the desktop does not install web apps on its own. Use Chrome, Edge or Safari for this, or bookmark the link.": "Firefox на комп’ютері сам не встановлює вебзастосунки. Скористайтеся Chrome, Edge або Safari або додайте посилання в закладки.",
+ "Click the install icon at the right end of the address bar, or open the browser menu and choose \"Install\".": "Натисніть значок установлення праворуч в адресному рядку або відкрийте меню браузера й виберіть «Установити».",
+ "Close": "Закрити",
+ "Rename group": "Перейменувати групу",
+ "Group name (empty removes the group)": "Назва групи (порожнє видаляє групу)",
+ "Move group up": "Перемістити групу вгору",
+ "Move group down": "Перемістити групу вниз"
 }

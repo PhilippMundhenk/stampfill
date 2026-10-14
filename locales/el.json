@@ -194,5 +194,16 @@
  "Move down": "Μετακίνηση κάτω",
  "Image unreadable or too large (at most 8 megapixels)": "Η εικόνα δεν διαβάζεται ή είναι πολύ μεγάλη (έως 8 megapixel)",
  "Install as app": "Εγκατάσταση ως εφαρμογή",
- "Adds this form to your home screen or desktop": "Προσθέτει αυτή τη φόρμα στην αρχική οθόνη ή την επιφάνεια εργασίας"
+ "Adds this form to your home screen or desktop": "Προσθέτει αυτή τη φόρμα στην αρχική οθόνη ή την επιφάνεια εργασίας",
+ "Installed, this form sits on your home screen or desktop and opens directly, like an app.": "Μετά την εγκατάσταση, η φόρμα αυτή βρίσκεται στην αρχική οθόνη ή στην επιφάνεια εργασίας και ανοίγει άμεσα, σαν εφαρμογή.",
+ "In Safari, tap the Share button and then \"Add to Home Screen\".": "Στο Safari πατήστε το κουμπί Κοινή χρήση και μετά «Προσθήκη στην αρχική οθόνη».",
+ "Open the browser menu (⋮) and choose \"Install app\" or \"Add to Home screen\".": "Ανοίξτε το μενού του προγράμματος περιήγησης (⋮) και επιλέξτε «Εγκατάσταση εφαρμογής» ή «Προσθήκη στην αρχική οθόνη».",
+ "In Safari, choose File › \"Add to Dock\".": "Στο Safari επιλέξτε Αρχείο › «Προσθήκη στο Dock».",
+ "Firefox on the desktop does not install web apps on its own. Use Chrome, Edge or Safari for this, or bookmark the link.": "Ο Firefox στον υπολογιστή δεν εγκαθιστά εφαρμογές ιστού από μόνος του. Χρησιμοποιήστε Chrome, Edge ή Safari, ή αποθηκεύστε τον σύνδεσμο ως σελιδοδείκτη.",
+ "Click the install icon at the right end of the address bar, or open the browser menu and choose \"Install\".": "Κάντε κλικ στο εικονίδιο εγκατάστασης στο δεξί άκρο της γραμμής διευθύνσεων ή ανοίξτε το μενού του προγράμματος περιήγησης και επιλέξτε «Εγκατάσταση».",
+ "Close": "Κλείσιμο",
+ "Rename group": "Μετονομασία ομάδας",
+ "Group name (empty removes the group)": "Όνομα ομάδας (κενό αφαιρεί την ομάδα)",
+ "Move group up": "Μετακίνηση ομάδας πάνω",
+ "Move group down": "Μετακίνηση ομάδας κάτω"
 }

@@ -39,7 +39,7 @@ const settle = async (p, action) => {
 test.beforeAll(async ({ browser: b, baseURL }) => {
   browser = b; fs.mkdirSync(SHOTS, { recursive: true });
   admin = track(await (await b.newContext({ baseURL })).newPage(), 'admin');
-  admin.on('dialog', (d) => (dialogAnswer === 'accept' ? d.accept() : d.dismiss()));
+  admin.on('dialog', (d) => (dialogAnswer === 'dismiss' ? d.dismiss() : d.accept(dialogAnswer === 'accept' ? undefined : dialogAnswer))); // any other value is typed into a prompt()
   user = track(await (await b.newContext({ baseURL })).newPage(), 'user');
 });
 test.afterAll(async () => { await admin.context().close(); await user.context().close(); });
@@ -175,18 +175,31 @@ test('admin drags a marker and the coordinates follow', async () => {
   expect(Math.abs((y0 - y1) - 30 / sc)).toBeLessThan(2); // moved 30 CSS px down = 30/sc points lower on the page
 });
 
-test('fields can be grouped and reordered', async () => {
+test('fields can be grouped and reordered; groups are blocks that move as one', async () => {
   const setGroup = async (label, group) => { await admin.locator('.fitem', { hasText: label }).click(); await admin.fill('#fp input[placeholder^="e.g. Applicant"]', group); await admin.keyboard.press('Tab'); };
-  await setGroup('Full name', 'Applicant'); await setGroup('Address', 'Applicant'); await setGroup('Signature', 'Consent');
   const order = () => admin.locator('.fitem b').allTextContents();
-  expect((await order()).slice(0, 4)).toEqual(['Full name', 'Date', 'Reference', 'Address']);
-  await admin.locator('.fitem', { hasText: 'Address' }).locator('button[title="Move up"]').click();
-  await admin.locator('.fitem', { hasText: 'Address' }).locator('button[title="Move up"]').click();
-  expect((await order()).slice(0, 4)).toEqual(['Full name', 'Address', 'Date', 'Reference']);
-  await expect(admin.locator('.fitem', { hasText: 'Full name' }).locator('button[title="Move up"]')).toBeDisabled();
-  await admin.locator('.fitem', { hasText: 'Date' }).dragTo(admin.locator('.fitem', { hasText: 'Agree' })); // drop before "Agree"
+  const item = (label) => admin.locator('.fitem', { hasText: label });
+  const heading = (name) => admin.locator('.flist .fgroup', { hasText: name });
+  await setGroup('Full name', 'Applicant'); await setGroup('Address', 'Applicant'); await setGroup('Signature', 'Consent');
+  expect((await order()).slice(0, 4)).toEqual(['Full name', 'Address', 'Date', 'Reference']); // Address joined the Applicant block
+  await expect(admin.locator('.flist .fgroup .gname')).toHaveText(['Applicant', 'Consent']);
+  await item('Address').locator('button[title="Move up"]').click();
+  expect((await order()).slice(0, 2)).toEqual(['Address', 'Full name']);
+  await expect(item('Full name').locator('button[title="Move down"]')).toBeDisabled(); // grouped fields stay inside their group
+  await item('Address').locator('button[title="Move down"]').click();
+  await heading('Applicant').locator('button[title="Move group down"]').click(); // the whole group moves past the loose "Date"
+  expect((await order()).slice(0, 3)).toEqual(['Date', 'Full name', 'Address']);
+  await heading('Applicant').locator('button[title="Move group up"]').click();
+  expect((await order()).slice(0, 3)).toEqual(['Full name', 'Address', 'Date']);
+  await item('Date').dragTo(item('Agree')); // drop before "Agree"
   const o = await order(); expect(o.indexOf('Date')).toBe(o.indexOf('Agree') - 1);
-  await expect(admin.locator('.flist .fgroup')).toHaveText(['Applicant', 'Consent']); // adjacent fields share one heading
+  await item('Reference').dragTo(heading('Consent')); // dropped on a heading: joins that group as its first field
+  expect(await admin.locator('.fitem.ing b').allTextContents()).toEqual(['Full name', 'Address', 'Reference', 'Signature']);
+  await item('Reference').click(); await expect(admin.locator('#fp input[placeholder^="e.g. Applicant"]')).toHaveValue('Consent');
+  dialogAnswer = 'Sign-off'; await heading('Consent').locator('button[title="Rename group"]').click();
+  await expect(admin.locator('.flist .fgroup .gname')).toHaveText(['Applicant', 'Sign-off']);
+  dialogAnswer = 'Consent'; await heading('Sign-off').locator('button[title="Rename group"]').click(); dialogAnswer = 'accept';
+  await expect(admin.locator('.flist .fgroup .gname')).toHaveText(['Applicant', 'Consent']);
   await expect(admin.locator('button.pri')).toHaveText('Save changes');
   await admin.click('button.pri'); await expect(admin.locator('button.pri')).toHaveText('Saved');
   await admin.reload(); await expect(admin.locator('.mk')).toHaveCount(10);
@@ -302,6 +315,7 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('#f_footer')).toHaveCount(0); // fixed text has no input
   await expect(user.locator('.panel label')).toHaveCount(10); // 9 fields plus "Remember on this device" of the signature
   await expect(user.locator('.panel h2.fgroup')).toHaveText(['Applicant', 'Consent']); // group headings in field order
+  await expect(user.locator('.panel hr.fsep')).toHaveCount(1); // a rule where loose fields follow a group
   expect(await user.locator('.panel label:not(.chk)').allTextContents()).toEqual(expect.arrayContaining(['Full name *', 'Address']));
   await expect(user.locator('.panel label').first()).toHaveText('Full name *');
   await expect(user.locator('input.remember')).not.toBeChecked(); // pictures are not remembered unless asked
@@ -310,13 +324,32 @@ test('form prefills from the link and from fixed values, validates required fiel
   await expect(user.locator('link[rel=manifest]')).toHaveAttribute('href', '/d/sample-request/manifest.webmanifest');
   expect(await user.evaluate(async () => { const r = await fetch(document.querySelector('link[rel=manifest]').href); const m = await r.json(); return [m.start_url, m.scope, m.display]; })).toEqual(['/d/sample-request', '/d/sample-request', 'standalone']);
   expect(await user.evaluate(async () => { const reg = await navigator.serviceWorker.ready; return reg.active ? reg.active.scriptURL.endsWith('/sw.js') : false; })).toBe(true);
-  // the browser's install offer surfaces as a button (raised by hand here: headless Chromium never offers to install)
-  await expect(user.locator('#installBtn')).toBeHidden();
+  // the install button sits in the header; without an install offer from the browser it explains the manual way
+  await expect(user.locator('header #installBtn')).toBeVisible();
+  await user.click('#installBtn'); await expect(user.locator('dialog.helpdlg')).toBeVisible();
+  await expect(user.locator('dialog.helpdlg p').last()).toContainText('address bar'); // headless Chromium counts as a desktop Chromium
+  await user.click('dialog.helpdlg button'); await expect(user.locator('dialog.helpdlg')).toHaveCount(0);
+  // the browser's install offer is used when there is one (raised by hand here: headless Chromium never offers to install)
   await user.evaluate(() => { const e = new Event('beforeinstallprompt'); /** @type {any} */ (e).prompt = () => { /** @type {any} */ (window).__prompted = true; }; /** @type {any} */ (e).userChoice = Promise.resolve({ outcome: 'accepted' }); window.dispatchEvent(e); });
-  await expect(user.locator('#installBtn')).toBeVisible();
   await user.click('#installBtn');
   expect(await user.evaluate(() => /** @type {any} */ (window).__prompted)).toBe(true);
-  await expect(user.locator('#installBtn')).toBeHidden();
+  await expect(user.locator('#installBtn')).toHaveCount(0); // accepted: the button is gone
+  { // already running as the installed app: no button
+    const ctx = await browser.newContext(); await ctx.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }));
+    const sp = await ctx.newPage(); await sp.goto(link); await expect(sp.locator('#f_full_name')).toBeVisible(); await expect(sp.locator('#installBtn')).toHaveCount(0); await ctx.close();
+  }
+  // the manual instructions follow the browser
+  const UAS = /** @type {[string, string][]} */ ([
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1', 'Add to Home Screen'],
+    ['Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36', 'Install app'],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15', 'Add to Dock'],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0', 'Firefox on the desktop'],
+  ]);
+  for (const [userAgent, hint] of UAS) {
+    const ctx = await browser.newContext({ userAgent }); const hp = track(await ctx.newPage(), 'ua');
+    await hp.goto(link); await hp.click('#installBtn'); await expect(hp.locator('dialog.helpdlg p').last()).toContainText(hint);
+    await cov.stop(hp); await ctx.close();
+  }
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeHidden(); // no signature yet
   await expect(user.locator('.imgbox:has(#f_stamp) .thumb')).toBeVisible(); // the admin's default stamp
   await expect(user.getByText('A default image is provided')).toBeVisible();

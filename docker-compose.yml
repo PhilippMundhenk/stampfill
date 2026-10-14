@@ -3,7 +3,7 @@
 #   docker compose up -d
 # For automatic HTTPS add the Caddy overlay:
 #   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d
-# For printers that do not accept PDF add the CUPS overlay (see README, "Printing").
+# For printers that do not accept PDF add the CUPS overlay (see docs/printing.md).
 services:
   stampfill:
     image: ghcr.io/philippmundhenk/stampfill:${STAMPFILL_TAG:-latest}  # pin a version in .env, e.g. STAMPFILL_TAG=1.1
@@ -20,7 +20,7 @@ services:
       SECURE_COOKIES: ${SECURE_COOKIES:-0} # 1 when served over HTTPS by a proxy that does not send X-Forwarded-Proto
       MAX_PDF_MB: ${MAX_PDF_MB:-25}
     volumes:
-      - stampfill-data:/data            # or a bind mount: ./data:/data (see "File permissions" in the README)
+      - stampfill-data:/data            # or a bind mount: ./data:/data (see docs/deploy.md, "File permissions")
     # the process only ever writes to /data: run it read-only, without capabilities, with limits
     read_only: true
     tmpfs:

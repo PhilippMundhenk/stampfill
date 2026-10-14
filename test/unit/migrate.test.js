@@ -71,3 +71,11 @@ test('migration is idempotent', () => {
   app.migrate(); app.migrate();
   assert.equal(JSON.stringify(app.db), once);
 });
+
+test('documents saved by 1.1.0 with scattered group members are reordered into blocks', () => {
+  const doc = app.db.docs[0], was = doc.fields;
+  doc.fields = [{ ...was[0], id: 'g1aa', key: 'g1aa', group: 'One' }, { ...was[0], id: 'loose', key: 'loose', group: '' }, { ...was[0], id: 'g1bb', key: 'g1bb', group: 'One' }];
+  app.migrate();
+  assert.deepEqual(doc.fields.map((f) => f.key), ['g1aa', 'g1bb', 'loose']);
+  doc.fields = was; app.migrate();
+});
