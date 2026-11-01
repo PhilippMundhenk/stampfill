@@ -98,7 +98,7 @@ test('admin places fields by double-click and configures prefill modes', async (
     await admin.fill('#fp input[type=text] >> nth=0', String(label));
     await admin.locator('#fp select').nth(0).selectOption(String(type));
     await admin.locator('#fp select').last().selectOption(String(pre));
-    if (pre === 'instance') { if (type === 'date') { await admin.fill('#fp .datef input[type=text]', '1990-02-01'); await admin.click('#fp .datef .cal'); await admin.evaluate(() => { const p = /** @type {HTMLInputElement} */ (document.querySelector('#fp .datef .datepick')); p.value = '1990-02-01'; p.dispatchEvent(new Event('change')); }); await expect(admin.locator('#fp .datef input[type=text]')).toHaveValue('1990-02-01'); } else await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Bietigheim'); }
+    if (pre === 'instance') { if (type === 'date') { await admin.fill('#fp .datef input[type=text]', '1990-02-01'); await admin.click('#fp .datef .cal'); await admin.evaluate(() => { const p = /** @type {HTMLInputElement} */ (document.querySelector('#fp .datef .datepick')); p.value = '1990-02-01'; p.dispatchEvent(new Event('change')); }); await expect(admin.locator('#fp .datef input[type=text]')).toHaveValue('1990-02-01'); } else await admin.fill('#fp input[placeholder=""] >> nth=-1', 'Office Musterstadt'); }
     if (label === 'Full name') await admin.locator('#fp label.chk input').first().check(); // Required
     await expect(admin.locator('.fitem')).toHaveCount(defs.indexOf(defs.find((d) => d[0] === label)) + 1);
   }
@@ -310,7 +310,7 @@ test('form prefills from the link and from fixed values, validates required fiel
   await user.goto(link + '#reference=REF-4711&birthday=24.12.1985&agree=1'); // link values may use the display notation
   await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('#f_reference')).toHaveValue('REF-4711');
-  await expect(user.locator('#f_issued_by')).toHaveValue('Office Bietigheim');
+  await expect(user.locator('#f_issued_by')).toHaveValue('Office Musterstadt');
   await expect(user.locator('#f_issued_by')).toBeHidden(); // fixed value: carried but not shown
   await expect(user.locator('#f_birthday')).toBeHidden();
   await expect(user.locator('#f_full_name')).toBeVisible();
@@ -373,7 +373,7 @@ test('form prefills from the link and from fixed values, validates required fiel
   await user.click('.datef:has(#f_date) .cal'); // opens the calendar where the browser allows it; harmless here
   await settle(user, async () => {
     await user.fill('#f_full_name', 'Jürgen Müller-Weiß'); await user.fill('#f_date', '2026-10-13');
-    await user.fill('#f_address', 'Hauptstraße 12\n74321 Bietigheim-Bissingen');
+    await user.fill('#f_address', 'Musterstraße 1\n12345 Musterstadt');
   });
   // signature pad: cancel, empty, then a real stroke
   await user.click('text=Draw signature'); await expect(user.locator('dialog.sigdlg')).toBeVisible();
@@ -424,7 +424,7 @@ test('browser-remembered values survive a reload, link values do not', async () 
   await expect(user.locator('.preview canvas')).toBeVisible();
   await expect(user.locator('.fgrp.closed')).toHaveCount(0); // the opened groups are remembered in this browser too
   await expect(user.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
-  await expect(user.locator('#f_address')).toHaveValue(/74321/);
+  await expect(user.locator('#f_address')).toHaveValue(/12345 Musterstadt/);
   await expect(user.locator('#f_reference')).toHaveValue('');
   await expect(user.locator('#f_birthday')).toHaveValue('1990-02-01'); // back to the fixed value without the link
   await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible(); // the signature is remembered in this browser
