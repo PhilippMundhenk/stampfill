@@ -31,7 +31,7 @@ test('settings and documents from 1.0.0 are kept and completed with defaults', (
   assert.deepEqual(d.rotation, [0]);
   assert.equal(d.fields[2].hidden, false, 'an old fixed-value field stays visible; only new ones are hidden by default');
   assert.equal(d.fields[0].required, true);
-  assert.equal(d.fields[2].value, 'Office Bietigheim');
+  assert.equal(d.fields[2].value, 'Office Musterstadt');
   const saved = JSON.parse(fs.readFileSync(path.join(DATA, 'db.json'), 'utf8'));
   assert.equal(saved.docs[0].fields.length, 4, 'the migrated state is written back');
 });
@@ -41,7 +41,7 @@ test('public and admin endpoints serve the migrated document', async () => {
   assert.equal(list.title, 'Town hall forms'); assert.equal(list.docs.length, 1); assert.equal(list.docs[0].slug, 'AbCdEfGhIj');
   const d = await (await fetch(base + '/api/d/AbCdEfGhIj')).json();
   assert.equal(d.title, 'Library card request'); assert.equal(d.fields.length, 4);
-  assert.equal(d.fields.find((f) => f.key === 'issued_by').value, 'Office Bietigheim');
+  assert.equal(d.fields.find((f) => f.key === 'issued_by').value, 'Office Musterstadt');
   const r = await fetch(base + '/api/d/AbCdEfGhIj/render', { method: 'POST', headers: { 'X-Requested-With': 'stampfill' }, body: JSON.stringify({ values: { full_name: 'Old User', date: '2026-10-13', agree: '1' } }) });
   assert.equal(r.status, 200); assert.equal(r.headers.get('content-type'), 'application/pdf');
   assert.equal((await fetch(base + '/healthz')).status, 200);
