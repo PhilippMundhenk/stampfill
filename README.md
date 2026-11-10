@@ -19,7 +19,8 @@ household. [More screenshots](docs/screenshots.md).
 - **Prefill**: a field can be remembered in the visitor's browser, fixed by the admin, carried in
   the link (`/d/<link>#key=value`), or default to today's date. One switch on the form covers
   everything remembered, pictures included, with the number of days next to it; every group has a
-  "Clear" button.
+  "Clear" button. "Move to another device" carries the remembered values to a phone or a second
+  computer as a file, without the server ever seeing them.
 - **Groups and order**: fields appear in the order of the editor's list. A group name becomes a
   heading on the form; groups are framed blocks that fold, move as units and can start closed.
 - **Printing**: browser print, PDF download, and server-side printing to any IPP printer or CUPS

@@ -21,6 +21,9 @@ The form offers "Forget saved values" to clear them.
   not people.
 - Values are per browser: a user at a different computer types them again. Links can carry
   non-sensitive values (`#key=value`) for that case; the editor restricts that mode to text fields.
+  Since #76 the form can also export everything remembered into a file and import it on another
+  device. The file goes from device to device through the user's own channels, never through
+  the server, so the decision above still holds.
 - Shared computers keep the last user's values until "Forget saved values" is used. The form says
   under each remembered field that it is remembered.
 - Browser storage is cleared when the user clears site data; that is by design.

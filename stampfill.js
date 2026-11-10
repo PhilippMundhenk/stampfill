@@ -290,6 +290,32 @@ async function applyRotation(pdf, rotation) {
 // groups that start folded on the form: names of groups that exist, each once
 const cleanCollapsed = (list, fields) => { const names = new Set(fields.map((f) => f.group).filter(Boolean)); return [...new Set((Array.isArray(list) ? list : []).filter((x) => typeof x === 'string').map((x) => str(x, 40).trim()).filter((x) => names.has(x)))]; };
 const cleanTags = (t) => [...new Set((Array.isArray(t) ? t : []).map((x) => str(x, 30).trim()).filter(Boolean))].slice(0, 20);
+// Saved values travel between devices as a file the visitor exports and imports (the server never sees it).
+// Both functions run in the public page (their source is inlined there) and in the unit tests.
+function parseSaved(text) { // file text -> { entries: { key: { v, t } }, days }; throws 'bad' for anything else
+  let o;
+  try { o = typeof text === 'string' && text.length <= 20e6 ? JSON.parse(text) : null; } catch (e) { o = null; }
+  if (!o || typeof o !== 'object' || o.stampfill !== 'saved-values' || o.version !== 1 || !o.entries || typeof o.entries !== 'object' || Array.isArray(o.entries)) throw new Error('bad');
+  const entries = {}, reserved = ['lang', 'docOpen', 'days', 'remember'];
+  for (const [k, e] of Object.entries(o.entries)) {
+    if (!/^[\w:.-]{1,120}$/.test(k) || reserved.includes(k) || !e || typeof e !== 'object') continue;
+    const t = typeof e.t === 'number' && e.t >= 0 && isFinite(e.t) ? e.t : 0, v = e.v;
+    const okObj = v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'boolean'); // group states
+    if ((typeof v === 'string' && v !== '' && v.length <= 5e6) || okObj) entries[k] = { v, t };
+  }
+  const days = Math.round(+o.days);
+  return { entries, days: days >= 1 && days <= 3650 ? days : null };
+}
+function mergeSaved(local, incoming, now, ttl) { // never deletes, never overwrites a newer value of this device
+  const set = {}; let added = 0, updated = 0, kept = 0;
+  for (const [k, e] of Object.entries(incoming)) {
+    if (e.t && now - e.t > ttl) continue; // expired on the other device's clock already: not worth bringing over
+    const mine = local[k];
+    if (!mine) { set[k] = { v: e.v, t: e.t || now }; added++; } else if (e.t > mine.t && JSON.stringify(e.v) !== JSON.stringify(mine.v)) { set[k] = { v: e.v, t: e.t }; updated++; } else kept++;
+  }
+  return { set, added, updated, kept };
+}
+const SAVED_JS = [parseSaved, mergeSaved].map(String).join('\n') + '\n';
 const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password });
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
@@ -700,7 +726,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { parseSaved, mergeSaved, start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -897,7 +923,7 @@ function page(title, body, js) { // the inline script is a constant, so the CSP 
 }
 
 // ---------------------------------------------------------------- public page: list + form
-const PUBLIC_HTML = page('Forms', '<header><a href="/" id="home">' + LOGO_SVG + '<span id="homeT">Forms</span></a><span class="sp"></span></header>', String.raw`
+const PUBLIC_HTML = page('Forms', '<header><a href="/" id="home">' + LOGO_SVG + '<span id="homeT">Forms</span></a><span class="sp"></span></header>', SAVED_JS + String.raw`
 const app = $('#app');
 const slug = (location.pathname.match(/^\/d\/([\w-]+)$/) || [])[1];
 (slug ? formView() : listView()).catch(fail);
@@ -1165,11 +1191,60 @@ async function formView() {
   });
   daysIn.addEventListener('change', () => { DAYS = Math.min(3650, Math.max(1, Math.round(+daysIn.value) || DEF_DAYS)); daysIn.value = DAYS; TTL = DAYS * 86400000; lsSet('days', String(DAYS)); });
   form.classList.toggle('norem', !REMEMBER);
+  // saved values move to another device as a file, exported here and imported there; nothing passes through the server
+  const savedHere = () => {
+    const out = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i), key = k && k.startsWith(LS) ? k.slice(LS.length) : null;
+        if (!key || ['lang', 'docOpen', 'days', 'remember'].includes(key)) continue;
+        const raw = localStorage.getItem(k); let e = null;
+        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) e = { v: o.v, t: +o.t || 0 }; } catch (err) { /* value from an older version */ }
+        out[key] = e || { v: raw, t: 0 };
+      }
+    } catch (err) { /* storage unavailable */ }
+    return out;
+  };
+  async function exportSaved() {
+    const entries = savedHere();
+    if (!Object.keys(entries).length) return toast(t('Nothing is saved on this device yet'), true);
+    const name = 'stampfill-saved-values-' + today() + '.json';
+    const file = new File([JSON.stringify({ stampfill: 'saved-values', version: 1, exported: new Date().toISOString(), days: DAYS, entries })], name, { type: 'application/json' });
+    if (matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) { // phones: the share sheet reaches the other device directly
+      try { await navigator.share({ files: [file], title: t('Saved values') }); return; } catch (err) { if (err.name === 'AbortError') return; }
+    }
+    const a = h('a', { href: URL.createObjectURL(file), download: name }); document.body.append(a); a.click(); a.remove();
+  }
+  const importPick = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: async () => {
+    const file = importPick.files[0]; importPick.value = ''; if (!file) return;
+    let data = null;
+    try { data = parseSaved(await file.text()); } catch (err) { return toast(t('This is not a file of saved values from this service'), true); }
+    const r = mergeSaved(savedHere(), data.entries, Date.now(), TTL);
+    let full = false;
+    for (const [k, e] of Object.entries(r.set)) { try { localStorage.setItem(LS + k, JSON.stringify(e)); } catch (err) { full = true; } }
+    if (lsGet('days') == null && data.days) { DAYS = data.days; TTL = DAYS * 86400000; daysIn.value = DAYS; lsSet('days', String(DAYS)); }
+    if (!REMEMBER) { REMEMBER = true; remChk.checked = true; lsSet('remember', '1'); form.classList.remove('norem'); } // importing is asking to remember
+    browserFields().forEach(f => { const v = store.get(f.key); if (v != null) put(f, v); });
+    schedule();
+    toast(full ? t('The browser storage is full; some values could not be imported')
+      : t('Imported: {a} new, {u} updated, {k} unchanged').replace('{a}', r.added).replace('{u}', r.updated).replace('{k}', r.kept), full);
+  } });
+  function moveDialog() {
+    const dlg = h('dialog', { class: 'sigdlg helpdlg', style: 'max-width:min(480px, calc(100vw - 32px))' }, h('h2', {}, t('Move saved values to another device')),
+      h('p', {}, t('Export what this device remembers for this site into a file, send the file to your other device, and import it there in any form of this site. Values that are newer on the other device stay as they are.')),
+      h('p', { class: 'hint' }, t('The file contains your saved entries, pictures and signatures. Keep it private and delete it once it is imported.')),
+      h('div', { class: 'row', style: 'margin-top:12px' },
+        h('button', { id: 'savedExport', onclick: async () => { dlg.close(); await exportSaved(); } }, t('Export file')),
+        h('button', { id: 'savedImport', onclick: () => { dlg.close(); importPick.click(); } }, t('Import file')),
+        h('span', { class: 'grow' }), h('button', { class: 'pri', onclick: () => dlg.close() }, t('Close'))));
+    dlg.addEventListener('close', () => dlg.remove()); document.body.append(dlg); dlg.showModal();
+  }
   const [daysBefore, daysAfter] = t('Keep for {n} days').split('{n}');
   if (has('browser')) form.append(h('div', { class: 'rembox' },
     h('label', { class: 'chk' }, remChk, t('Remember my entries on this device')),
     h('label', { class: 'chk days' }, daysBefore.trim(), daysIn, daysAfter.trim()),
-    h('div', { class: 'hint' }, t('Applies to the marked fields, including pictures. Switching it off removes what is saved here.'))));
+    h('div', { class: 'hint' }, t('Applies to the marked fields, including pictures. Switching it off removes what is saved here.')),
+    h('button', { type: 'button', class: 'small', id: 'savedMove', style: 'margin-top:8px', onclick: moveDialog }, t('Move to another device')), importPick));
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
       h('button', { class: 'pri', onclick: guard(browserPrint) }, t('Print')),

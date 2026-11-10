@@ -214,5 +214,16 @@
  "Remember entries on the device by default (visitors can switch it off on the form)": "Domyślnie zapamiętuj wpisy na urządzeniu (odwiedzający mogą to wyłączyć na formularzu)",
  "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Domyślny czas przechowywania zapamiętanych wartości na urządzeniu; odwiedzający mogą zmienić liczbę na formularzu.",
  "Pick a date": "Wybierz datę",
- "Clear all fields in this group": "Wyczyść wszystkie pola w tej grupie"
+ "Clear all fields in this group": "Wyczyść wszystkie pola w tej grupie",
+ "Move to another device": "Przenieś na inne urządzenie",
+ "Move saved values to another device": "Przenieś zapisane wartości na inne urządzenie",
+ "Export what this device remembers for this site into a file, send the file to your other device, and import it there in any form of this site. Values that are newer on the other device stay as they are.": "Wyeksportuj do pliku to, co to urządzenie zapamiętało dla tej witryny, wyślij plik na drugie urządzenie i zaimportuj go tam w dowolnym formularzu tej witryny. Wartości nowsze na drugim urządzeniu pozostaną bez zmian.",
+ "The file contains your saved entries, pictures and signatures. Keep it private and delete it once it is imported.": "Plik zawiera Twoje zapisane dane, obrazy i podpisy. Zachowaj go dla siebie i usuń po zaimportowaniu.",
+ "Export file": "Eksportuj plik",
+ "Import file": "Importuj plik",
+ "Nothing is saved on this device yet": "Na tym urządzeniu nic jeszcze nie zapisano",
+ "Saved values": "Zapisane wartości",
+ "This is not a file of saved values from this service": "To nie jest plik zapisanych wartości z tej usługi",
+ "The browser storage is full; some values could not be imported": "Pamięć przeglądarki jest pełna; niektórych wartości nie udało się zaimportować",
+ "Imported: {a} new, {u} updated, {k} unchanged": "Zaimportowano: {a} nowe, {u} zaktualizowane, {k} bez zmian"
 }

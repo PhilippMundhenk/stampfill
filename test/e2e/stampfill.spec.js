@@ -431,6 +431,48 @@ test('browser-remembered values survive a reload, link values do not', async () 
   await expect(user.locator('#f_date')).toHaveValue(TODAY); // "today" is recomputed on every open, not remembered
 });
 
+test('saved values move to another device as a file, without overwriting newer ones there', async ({ baseURL }) => {
+  await user.click('#savedMove'); await expect(user.locator('dialog h2')).toHaveText('Move saved values to another device');
+  await shot(user, '4b-move-saved-values');
+  const [dl] = await Promise.all([user.waitForEvent('download'), user.click('#savedExport')]);
+  expect(dl.suggestedFilename()).toBe('stampfill-saved-values-' + TODAY + '.json');
+  const exported = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
+  expect(exported).toMatchObject({ stampfill: 'saved-values', version: 1, days: 7 });
+  expect(exported.entries.full_name.v).toBe('Jürgen Müller-Weiß'); expect(exported.entries.signature.v).toMatch(/^data:image\/png;base64,/);
+  expect(Object.keys(exported.entries)).not.toContain('lang'); expect(Object.keys(exported.entries)).not.toContain('remember');
+  const before = await user.evaluate(() => JSON.stringify(Object.entries(localStorage).sort()));
+
+  // the other device: remembering switched off, nothing to export yet, and one value of its own that is newer
+  const ctx = await browser.newContext({ baseURL, viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
+  const other = track(await ctx.newPage(), 'other device');
+  await other.addInitScript(() => { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('stampfill:remember', '0'); } });
+  await other.goto(link); await expect(other.locator('.preview canvas')).toBeVisible();
+  await other.click('#savedMove'); await other.click('#savedExport');
+  await expect(other.locator('#toast')).toHaveText('Nothing is saved on this device yet');
+  await other.evaluate(() => localStorage.setItem('stampfill:address', JSON.stringify({ v: 'Newer street 1', t: Date.now() + 60000 })));
+  await other.setInputFiles('.rembox input[type=file]', { name: 'other.json', mimeType: 'application/json', buffer: Buffer.from('{"stampfill":"something-else"}') });
+  await expect(other.locator('#toast')).toHaveText('This is not a file of saved values from this service');
+  await other.setInputFiles('.rembox input[type=file]', { name: 'saved.json', mimeType: 'application/json', buffer: fs.readFileSync(await dl.path()) });
+  await expect(other.locator('#toast')).toHaveText(/^Imported: \d+ new, 0 updated, 1 unchanged$/);
+  await expect(other.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
+  await expect(other.locator('#f_address')).toHaveValue('Newer street 1'); // newer on this device: kept
+  await expect(other.locator('.imgbox:has(#f_signature) .thumb')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  await expect(other.locator('.rembox input[type=checkbox]')).toBeChecked(); // importing switches remembering on
+  await expect(other.locator('.rembox input[type=number]')).toHaveValue('7');
+  await other.reload(); await expect(other.locator('.preview canvas')).toBeVisible();
+  await expect(other.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß'); // stored, not only shown
+  await expect(other.locator('.fgrp.closed')).toHaveCount(0); // the folded groups came along and apply from the next open
+  await expect(other.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
+  // a phone hands the export to the share sheet instead of downloading it
+  await other.evaluate(() => { /** @type {any} */ (navigator).canShare = () => true; /** @type {any} */ (navigator).share = async (d) => { /** @type {any} */ (window).__shared = d.files[0].name; }; });
+  await other.click('#savedMove'); await other.click('#savedExport');
+  await expect.poll(() => other.evaluate(() => /** @type {any} */ (window).__shared)).toBe('stampfill-saved-values-' + TODAY + '.json');
+  await cov.stop(other); await ctx.close();
+
+  // exporting changed nothing on the first device
+  expect(await user.evaluate(() => JSON.stringify(Object.entries(localStorage).sort()))).toBe(before);
+});
+
 test('image print fallback renders pages and calls window.print', async () => {
   // own page: page.pdf() leaves the page with a suspended network stack, which would break later navigations
   const p = track(await user.context().newPage(), 'print');

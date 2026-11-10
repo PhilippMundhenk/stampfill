@@ -120,6 +120,14 @@ browser's `localStorage` (per user, never sent to the server until they print), 
 the admin, or today's date. Image fields follow the same rules; a signature stored with browser
 prefill never leaves the user's machine except inside the rendered PDF they asked for.
 
+Remembered values move between devices as a file the visitor carries themselves. The export is a
+JSON document `{ "stampfill": "saved-values", "version": 1, "days", "entries": { key: { "v", "t" } } }`
+with every `stampfill:` entry except the device settings (language, switch, days). On phones it goes
+to the share sheet, elsewhere it is downloaded. `parseSaved()` validates an imported file and
+`mergeSaved()` merges it: missing entries are added, older ones replaced, newer or identical ones
+kept, expired ones skipped, and nothing is ever deleted. Both functions live on the server side
+for the unit tests and are inlined into the public page, so the tests cover exactly the code that runs.
+
 ## Security model
 
 - One admin, one password (environment variable or scrypt hash in `db.json`). Sessions are
