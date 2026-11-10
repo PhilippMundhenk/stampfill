@@ -61,7 +61,7 @@ setting).
 
 ## Upgrades
 
-Releases are tagged `1.2.0`, `1.2` and `latest`. Set `STAMPFILL_TAG` in `.env` to follow a version
+Releases are tagged `1.1.0`, `1.1` and `latest`. Set `STAMPFILL_TAG` in `.env` to follow a version
 line, then:
 
 ```sh
