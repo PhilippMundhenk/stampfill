@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-10
+
 ### Added
 - Every form can be installed as a progressive web app that opens that form directly: per-document
   web app manifest with a limited scope, generated icons, an "Install as app" button and a small
@@ -22,7 +24,6 @@ All notable changes to this project are documented here. The format follows
   into a file, shared through the phone's share sheet or downloaded, and imports such a file on
   the other device. An import only adds missing values and replaces older ones; values that are
   newer on the receiving device stay as they are. Nothing passes through the server. (#76)
-
 - "Detect fields" in the editor finds the fields of a template and proposes them as stampfill
   fields, positioned on the form, sized to fit each box and typed from the field kind or the label
   (date and signature words in all eight interface languages). It reads the fields of PDF forms
@@ -33,10 +34,6 @@ All notable changes to this project are documented here. The format follows
   are out of reach. (#77)
 
 ### Changed
-- The form fields of a template (AcroForm) are flattened when a PDF is rendered: their look
-  becomes page content and the stamped values print on top. Before, PDF viewers drew the
-  template's fields over values placed inside them, and fields on rotated pages were lost. Hidden
-  fields and empty signature fields stay invisible. Stored data is unchanged. (#77)
 - Fields of one group are always kept together, at the position of the group's first field.
   Existing documents are reordered that way on start; the relative order within a group is kept.
 - Groups on the form are framed blocks that fold and unfold. A group closed in the editor's field
@@ -56,6 +53,13 @@ All notable changes to this project are documented here. The format follows
   browser remembered for them. (#64)
 - The README is a short overview again; deployment, printing and the screenshots moved to
   `docs/deploy.md`, `docs/printing.md` and `docs/screenshots.md`. (#58)
+
+### Fixed
+- Values stamped inside a form field of the template were hidden: PDF viewers drew the
+  template's own fields (AcroForm) on top of them. Rendering now flattens those fields, so their
+  look becomes page content and the values print over it; hidden fields and empty signature
+  fields stay invisible, and fields on rotated pages no longer vanish. The output was always meant
+  to be flat; stored data is unchanged. (#77)
 
 ## [1.1.0] - 2026-10-14
 
