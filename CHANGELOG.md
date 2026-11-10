@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows
   and drag handle, grouped fields move within their group, loose fields move past whole groups,
   a field dropped on another joins that field's group, and groups can be renamed in one go. The
   form shows a rule where loose fields follow a group. (#56)
+- Saved values can move to another device: "Move to another device" on the form exports
+  everything the browser remembers for the site (entries, pictures, signatures, folded groups)
+  into a file, shared through the phone's share sheet or downloaded, and imports such a file on
+  the other device. An import only adds missing values and replaces older ones; values that are
+  newer on the receiving device stay as they are. Nothing passes through the server. (#76)
 
 ### Changed
 - Fields of one group are always kept together, at the position of the group's first field.

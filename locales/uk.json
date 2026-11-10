@@ -214,5 +214,16 @@
  "Remember entries on the device by default (visitors can switch it off on the form)": "Запам’ятовувати дані на пристрої типово (відвідувачі можуть вимкнути це на формі)",
  "Default for how long a form keeps remembered values on a device; visitors can change the number on the form.": "Типове значення, як довго форма зберігає запам’ятовані дані на пристрої; відвідувачі можуть змінити число на формі.",
  "Pick a date": "Вибрати дату",
- "Clear all fields in this group": "Очистити всі поля цієї групи"
+ "Clear all fields in this group": "Очистити всі поля цієї групи",
+ "Move to another device": "Перенести на інший пристрій",
+ "Move saved values to another device": "Перенести збережені значення на інший пристрій",
+ "Export what this device remembers for this site into a file, send the file to your other device, and import it there in any form of this site. Values that are newer on the other device stay as they are.": "Експортуйте у файл те, що цей пристрій запам’ятав для цього сайту, надішліть файл на інший пристрій та імпортуйте його там у будь-якій формі цього сайту. Значення, новіші на іншому пристрої, залишаться без змін.",
+ "The file contains your saved entries, pictures and signatures. Keep it private and delete it once it is imported.": "Файл містить ваші збережені дані, зображення та підписи. Зберігайте його приватно й видаліть після імпорту.",
+ "Export file": "Експортувати файл",
+ "Import file": "Імпортувати файл",
+ "Nothing is saved on this device yet": "На цьому пристрої ще нічого не збережено",
+ "Saved values": "Збережені значення",
+ "This is not a file of saved values from this service": "Це не файл збережених значень цього сервісу",
+ "The browser storage is full; some values could not be imported": "Сховище браузера заповнене; деякі значення не вдалося імпортувати",
+ "Imported: {a} new, {u} updated, {k} unchanged": "Імпортовано: {a} нових, {u} оновлено, {k} без змін"
 }
