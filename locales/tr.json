@@ -225,5 +225,19 @@
  "Saved values": "Kayıtlı değerler",
  "This is not a file of saved values from this service": "Bu, bu hizmete ait kayıtlı değerler dosyası değil",
  "The browser storage is full; some values could not be imported": "Tarayıcı depolama alanı dolu; bazı değerler içe aktarılamadı",
- "Imported: {a} new, {u} updated, {k} unchanged": "İçe aktarıldı: {a} yeni, {u} güncellendi, {k} değişmedi"
+ "Imported: {a} new, {u} updated, {k} unchanged": "İçe aktarıldı: {a} yeni, {u} güncellendi, {k} değişmedi",
+ "Click to include or leave out": "Eklemek veya çıkarmak için tıkla",
+ "{n} fields found": "{n} alan bulundu",
+ "No fields found": "Alan bulunamadı",
+ "Add selected fields": "Seçili alanları ekle",
+ "Discard": "Vazgeç",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "Yeşil kutular her değerin nereye basılacağını gösterir. İhtiyacın olmayanların işaretini kaldır; etiketler ve türler burada veya daha sonra değiştirilebilir.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "Bu, PDF formlarıyla ve doldurma çizgileri veya kutuları olan formlarla çalışır. Taranmış sayfalarda okunacak metin yoktur; alanlarını elle yerleştir.",
+ "Rotated pages were left out.": "Döndürülmüş sayfalar atlandı.",
+ "Include this field": "Bu alanı ekle",
+ "Label": "Etiket",
+ "Show on the page": "Sayfada göster",
+ "{n} fields added. Check them, then save.": "{n} alan eklendi. Kontrol et, sonra kaydet.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "PDF’in alanlarını bulur ve hizalanmış, boyutlandırılmış olarak önerir",
+ "Detect fields": "Alanları algıla"
 }

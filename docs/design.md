@@ -77,7 +77,9 @@ field placed at a pixel in the browser lands at the same point in the printed PD
 
 `renderPdf(doc, fields, values, rotation, preview)`:
 
-1. Load the template with pdf-lib.
+1. Load the template with pdf-lib and flatten its form fields, if it has any: their appearance
+   becomes page content, so the stamped values are drawn on top instead of underneath. Hidden
+   widgets and widgets without an appearance (empty signature fields) get a blank one first.
 2. If any page has a rotation, embed that page as a form XObject and draw it rotated around the
    centre of a fresh page of the right size; the original upload is never modified.
 3. Embed the font: `DATA_DIR/font.ttf` through fontkit if present (Unicode), else Helvetica.
@@ -106,6 +108,33 @@ overlay adds a CUPS sidecar that converts ([ADR 0004](adr/0004-ipp-and-cups.md))
 Browser printing takes the vector PDF route on desktop Chromium (hidden iframe with the PDF
 viewer) and falls back to printing high-resolution page images everywhere else, because mobile
 browsers and Firefox cannot print an inline PDF reliably.
+
+## Field detection
+
+"Detect fields" in the editor fetches the untouched template (`GET /api/admin/docs/<id>/pdf`)
+and reads every page with pdf.js in the admin's browser: `detectPage()` collects the widget
+annotations, the horizontal text items and the drawn paths. `pathShapes()` turns the operator list
+into lines and boxes in page coordinates by following the transformation matrix, and `proposeFields()`
+decides:
+
+- A PDF form's own fields win: text (multi-line flag → multi-line text), checkbox, radio button,
+  choice, signature. The label is the field's tooltip, else the text beside it, else its name.
+- In a flat PDF, fill-in lines typed as `____`/`....` (the label is the text before them in the
+  same item), drawn lines (only the parts no text stands on), boxes (empty, or with a caption in
+  their upper part), small squares and `☐` glyphs (check boxes, labelled to their right).
+  Frames around other boxes or lines are not fields.
+- The type comes from the field kind, else from the label (date and signature words in the
+  interface languages, but "Place, date" stays text), else from the height (tall boxes are
+  multi-line).
+- Placement follows how the renderer draws: text on a baseline inside the box with a font size
+  from the box height (at most 11 pt) and `maxWidth` from its width, the `X` of a checkbox centred
+  in its square, a signature filling its box or 36 pt above its line.
+- One proposal per place (form fields, then boxes, then lines), and none where a field exists.
+
+The proposals are shown, not saved: the admin unticks, renames and retypes them and adds the rest
+to the unsaved layout, which goes through `cleanFields()` on save like any other edit. Pages with
+an editor rotation are skipped, because the template's coordinates no longer match them. The
+functions are written on the server side for the unit tests and inlined into the editor page.
 
 ## Front end
 
@@ -162,4 +191,6 @@ Coverage gates are enforced in CI: 95% of server lines and 85% of each inline pa
   thousands.
 - Printing from the server needs a printer that accepts PDF or a CUPS queue in between; there is
   no built-in rasteriser.
-- The editor places text at points; it does not fill existing AcroForm fields of a PDF.
+- The editor places text at points; it does not fill existing AcroForm fields of a PDF. It can
+  read them to propose fields (see "Field detection"), and the output is always flat.
+- Field detection needs a text layer: scanned pages without one would need OCR.

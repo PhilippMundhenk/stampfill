@@ -225,5 +225,19 @@
  "Saved values": "Сохранённые значения",
  "This is not a file of saved values from this service": "Это не файл сохранённых значений этого сервиса",
  "The browser storage is full; some values could not be imported": "Хранилище браузера заполнено; некоторые значения не удалось импортировать",
- "Imported: {a} new, {u} updated, {k} unchanged": "Импортировано: {a} новых, {u} обновлено, {k} без изменений"
+ "Imported: {a} new, {u} updated, {k} unchanged": "Импортировано: {a} новых, {u} обновлено, {k} без изменений",
+ "Click to include or leave out": "Нажмите, чтобы включить или исключить",
+ "{n} fields found": "Найдено полей: {n}",
+ "No fields found": "Поля не найдены",
+ "Add selected fields": "Добавить выбранные поля",
+ "Discard": "Отменить",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "Зелёные рамки показывают, где будет напечатано каждое значение. Снимите отметку с ненужного; подписи и типы можно изменить здесь или позже.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "Это работает с PDF-формами и с формами, в которых есть линии или поля для заполнения. В отсканированных страницах нет читаемого текста; разместите их поля вручную.",
+ "Rotated pages were left out.": "Повёрнутые страницы пропущены.",
+ "Include this field": "Включить это поле",
+ "Label": "Подпись поля",
+ "Show on the page": "Показать на странице",
+ "{n} fields added. Check them, then save.": "Добавлено полей: {n}. Проверьте их и сохраните.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "Находит поля PDF и предлагает их, выровненными и подходящего размера",
+ "Detect fields": "Распознать поля"
 }

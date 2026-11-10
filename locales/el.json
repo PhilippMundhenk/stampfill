@@ -225,5 +225,19 @@
  "Saved values": "Αποθηκευμένες τιμές",
  "This is not a file of saved values from this service": "Αυτό δεν είναι αρχείο αποθηκευμένων τιμών αυτής της υπηρεσίας",
  "The browser storage is full; some values could not be imported": "Ο χώρος αποθήκευσης του προγράμματος περιήγησης είναι πλήρης· ορισμένες τιμές δεν εισήχθησαν",
- "Imported: {a} new, {u} updated, {k} unchanged": "Εισήχθησαν: {a} νέες, {u} ενημερώθηκαν, {k} αμετάβλητες"
+ "Imported: {a} new, {u} updated, {k} unchanged": "Εισήχθησαν: {a} νέες, {u} ενημερώθηκαν, {k} αμετάβλητες",
+ "Click to include or leave out": "Κάντε κλικ για συμπερίληψη ή εξαίρεση",
+ "{n} fields found": "Βρέθηκαν {n} πεδία",
+ "No fields found": "Δεν βρέθηκαν πεδία",
+ "Add selected fields": "Προσθήκη επιλεγμένων πεδίων",
+ "Discard": "Απόρριψη",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "Τα πράσινα πλαίσια δείχνουν πού θα τυπωθεί κάθε τιμή. Αποεπιλέξτε ό,τι δεν χρειάζεστε· οι ετικέτες και οι τύποι αλλάζουν εδώ ή αργότερα.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "Λειτουργεί με φόρμες PDF και με φόρμες που έχουν γραμμές ή πλαίσια συμπλήρωσης. Οι σαρωμένες σελίδες δεν έχουν αναγνώσιμο κείμενο· τοποθετήστε τα πεδία τους με το χέρι.",
+ "Rotated pages were left out.": "Οι περιστραμμένες σελίδες παραλείφθηκαν.",
+ "Include this field": "Συμπερίληψη αυτού του πεδίου",
+ "Label": "Ετικέτα",
+ "Show on the page": "Εμφάνιση στη σελίδα",
+ "{n} fields added. Check them, then save.": "Προστέθηκαν {n} πεδία. Ελέγξτε τα και μετά αποθηκεύστε.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "Βρίσκει τα πεδία του PDF και τα προτείνει ευθυγραμμισμένα και με σωστό μέγεθος",
+ "Detect fields": "Εντοπισμός πεδίων"
 }

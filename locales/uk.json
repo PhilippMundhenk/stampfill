@@ -225,5 +225,19 @@
  "Saved values": "Збережені значення",
  "This is not a file of saved values from this service": "Це не файл збережених значень цього сервісу",
  "The browser storage is full; some values could not be imported": "Сховище браузера заповнене; деякі значення не вдалося імпортувати",
- "Imported: {a} new, {u} updated, {k} unchanged": "Імпортовано: {a} нових, {u} оновлено, {k} без змін"
+ "Imported: {a} new, {u} updated, {k} unchanged": "Імпортовано: {a} нових, {u} оновлено, {k} без змін",
+ "Click to include or leave out": "Натисніть, щоб додати або виключити",
+ "{n} fields found": "Знайдено полів: {n}",
+ "No fields found": "Поля не знайдено",
+ "Add selected fields": "Додати вибрані поля",
+ "Discard": "Скасувати",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "Зелені рамки показують, де буде надруковано кожне значення. Зніміть позначку з непотрібного; підписи й типи можна змінити тут або пізніше.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "Це працює з PDF-формами та з формами, що мають лінії або клітинки для заповнення. Відскановані сторінки не містять тексту для читання; розмістіть їхні поля вручну.",
+ "Rotated pages were left out.": "Повернуті сторінки пропущено.",
+ "Include this field": "Додати це поле",
+ "Label": "Назва поля",
+ "Show on the page": "Показати на сторінці",
+ "{n} fields added. Check them, then save.": "Додано полів: {n}. Перевірте їх, потім збережіть.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "Знаходить поля PDF і пропонує їх вирівняними та відповідного розміру",
+ "Detect fields": "Розпізнати поля"
 }

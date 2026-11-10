@@ -225,5 +225,19 @@
  "Saved values": "Zapisane wartości",
  "This is not a file of saved values from this service": "To nie jest plik zapisanych wartości z tej usługi",
  "The browser storage is full; some values could not be imported": "Pamięć przeglądarki jest pełna; niektórych wartości nie udało się zaimportować",
- "Imported: {a} new, {u} updated, {k} unchanged": "Zaimportowano: {a} nowe, {u} zaktualizowane, {k} bez zmian"
+ "Imported: {a} new, {u} updated, {k} unchanged": "Zaimportowano: {a} nowe, {u} zaktualizowane, {k} bez zmian",
+ "Click to include or leave out": "Kliknij, aby dodać lub pominąć",
+ "{n} fields found": "Znaleziono pól: {n}",
+ "No fields found": "Nie znaleziono pól",
+ "Add selected fields": "Dodaj wybrane pola",
+ "Discard": "Odrzuć",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "Zielone ramki pokazują, gdzie zostanie wydrukowana każda wartość. Odznacz to, czego nie potrzebujesz; etykiety i typy można zmienić tutaj lub później.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "Działa z formularzami PDF i formularzami z liniami lub polami do wypełnienia. Zeskanowane strony nie zawierają tekstu do odczytania; umieść ich pola ręcznie.",
+ "Rotated pages were left out.": "Obrócone strony zostały pominięte.",
+ "Include this field": "Uwzględnij to pole",
+ "Label": "Etykieta",
+ "Show on the page": "Pokaż na stronie",
+ "{n} fields added. Check them, then save.": "Dodano pól: {n}. Sprawdź je, a potem zapisz.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "Znajduje pola w PDF i proponuje je wyrównane i o odpowiednim rozmiarze",
+ "Detect fields": "Wykryj pola"
 }
