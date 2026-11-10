@@ -23,7 +23,20 @@ All notable changes to this project are documented here. The format follows
   the other device. An import only adds missing values and replaces older ones; values that are
   newer on the receiving device stay as they are. Nothing passes through the server. (#76)
 
+- "Detect fields" in the editor finds the fields of a template and proposes them as stampfill
+  fields, positioned on the form, sized to fit each box and typed from the field kind or the label
+  (date and signature words in all eight interface languages). It reads the fields of PDF forms
+  and, in flat PDFs, fill-in lines typed as `____` or `....`, drawn lines, boxes with or without a
+  caption, and check boxes. The proposals show as green boxes on the page and as a list to untick,
+  rename and retype; nothing is added until the admin accepts them, places that already hold a
+  field are left out, and pages rotated in the editor are skipped. Scans without a text layer
+  are out of reach. (#77)
+
 ### Changed
+- The form fields of a template (AcroForm) are flattened when a PDF is rendered: their look
+  becomes page content and the stamped values print on top. Before, PDF viewers drew the
+  template's fields over values placed inside them, and fields on rotated pages were lost. Hidden
+  fields and empty signature fields stay invisible. Stored data is unchanged. (#77)
 - Fields of one group are always kept together, at the position of the group's first field.
   Existing documents are reordered that way on start; the relative order within a group is kept.
 - Groups on the form are framed blocks that fold and unfold. A group closed in the editor's field

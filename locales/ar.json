@@ -225,5 +225,19 @@
  "Saved values": "القيم المحفوظة",
  "This is not a file of saved values from this service": "هذا ليس ملف قيم محفوظة من هذه الخدمة",
  "The browser storage is full; some values could not be imported": "مساحة تخزين المتصفح ممتلئة؛ تعذّر استيراد بعض القيم",
- "Imported: {a} new, {u} updated, {k} unchanged": "تم الاستيراد: {a} جديدة، {u} محدَّثة، {k} دون تغيير"
+ "Imported: {a} new, {u} updated, {k} unchanged": "تم الاستيراد: {a} جديدة، {u} محدَّثة، {k} دون تغيير",
+ "Click to include or leave out": "انقر للإضافة أو الاستبعاد",
+ "{n} fields found": "تم العثور على {n} حقول",
+ "No fields found": "لم يتم العثور على حقول",
+ "Add selected fields": "إضافة الحقول المحددة",
+ "Discard": "تجاهل",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "تُظهر المربعات الخضراء مكان طباعة كل قيمة. أزل التحديد عمّا لا تحتاجه؛ يمكن تغيير التسميات والأنواع هنا أو لاحقًا.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "يعمل هذا مع نماذج PDF ومع النماذج التي تحتوي على خطوط أو مربعات للتعبئة. الصفحات الممسوحة ضوئيًا لا تحتوي على نص مقروء؛ ضع حقولها يدويًا.",
+ "Rotated pages were left out.": "تم تخطي الصفحات المدوّرة.",
+ "Include this field": "تضمين هذا الحقل",
+ "Label": "التسمية",
+ "Show on the page": "إظهار على الصفحة",
+ "{n} fields added. Check them, then save.": "تمت إضافة {n} حقول. راجعها ثم احفظ.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "يعثر على حقول ملف PDF ويقترحها بمحاذاة وحجم مناسبين",
+ "Detect fields": "اكتشاف الحقول"
 }

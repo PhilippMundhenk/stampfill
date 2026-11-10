@@ -27,7 +27,7 @@
  */
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
-const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
+const { PDFDocument, StandardFonts, AnnotationFlags, rgb, degrees } = require('pdf-lib');
 let fontkit = null; try { fontkit = require('@pdf-lib/fontkit'); } catch (e) { /* optional */ }
 
 const PORT = +process.env.PORT || 8080;
@@ -316,6 +316,139 @@ function mergeSaved(local, incoming, now, ttl) { // never deletes, never overwri
   return { set, added, updated, kept };
 }
 const SAVED_JS = [parseSaved, mergeSaved].map(String).join('\n') + '\n';
+
+// Field detection for the editor: pdf.js reads the template in the admin's browser, these functions turn
+// what it finds into proposed fields. Like the two above, they run in the page and in the unit tests.
+function pathShapes(fnArray, argsArray, OPS) { // drawn horizontal lines and boxes of a page, in page coordinates
+  const out = [], stack = [], paint = ['stroke', 'closeStroke', 'fill', 'eoFill', 'fillStroke', 'eoFillStroke', 'closeFillStroke', 'closeEOFillStroke'].map((n) => OPS[n]);
+  const mul = (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
+  let m = [1, 0, 0, 1, 0, 0];
+  const shape = (pts) => {
+    const xs = pts.map((p) => m[0] * p[0] + m[2] * p[1] + m[4]), ys = pts.map((p) => m[1] * p[0] + m[3] * p[1] + m[5]);
+    const x1 = Math.min(...xs), x2 = Math.max(...xs), y1 = Math.min(...ys), y2 = Math.max(...ys);
+    if (y2 - y1 <= 2.5 && x2 - x1 >= 30) out.push({ kind: 'line', x1, x2, y1: (y1 + y2) / 2, y2: (y1 + y2) / 2 });
+    else if (x2 - x1 >= 6 && y2 - y1 >= 6 && pts.length >= 4 && pts.length <= 5) out.push({ kind: 'box', x1, x2, y1, y2 });
+  };
+  for (let k = 0; k < fnArray.length; k++) {
+    const fn = fnArray[k], args = argsArray[k];
+    if (fn === OPS.save) stack.push(m);
+    else if (fn === OPS.restore) m = stack.pop() || m;
+    else if (fn === OPS.transform) m = mul(m, args);
+    else if (fn === OPS.paintFormXObjectBegin) { stack.push(m); if (Array.isArray(args[0]) || ArrayBuffer.isView(args[0])) m = mul(m, Array.from(args[0])); }
+    else if (fn === OPS.paintFormXObjectEnd) m = stack.pop() || m;
+    else if (fn === OPS.constructPath && paint.includes(args[0]) && args[1] && args[1][0]) {
+      const d = args[1][0]; let pts = [], curve = false, i = 0;
+      const flush = () => { if (pts.length >= 2 && !curve) shape(pts); pts = []; curve = false; };
+      while (i < d.length) { // DrawOPS: 0 moveTo, 1 lineTo, 2 curveTo, 3 quadraticCurveTo, 4 closePath
+        const op = d[i];
+        if (op === 0) { flush(); pts.push([d[i + 1], d[i + 2]]); i += 3; } else if (op === 1) { pts.push([d[i + 1], d[i + 2]]); i += 3; } else if (op === 2) { curve = true; i += 7; } else if (op === 3) { curve = true; i += 5; } else i += 1;
+      }
+      flush();
+    }
+  }
+  return out;
+}
+function fieldType(label) { // a field's data type from the words of its label, in the languages of the interface
+  if (/signature|sign here|unterschrift|unterzeichn|imza|İmza|توقيع|подпис|підпис|υπογραφ|podpis/i.test(label)) return 'signature';
+  if (/\bdate\b|datum|tarih|تاريخ|дата|ημερομην|^data\b|birthday|\bdob\b|\bgeb\.|geboren am/i.test(label) && !/[,/&+]|\bund\b|\band\b|\bort\b|\bplace\b/i.test(label)) return 'date';
+  return 'text';
+}
+function proposeFields(input) { // { page, widgets, text, shapes, existing } -> proposed fields, aligned and sized
+  const r1 = (v) => Math.round(v * 10) / 10, clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const text = (input.text || []).filter((t) => t.s && t.s.trim() && t.w > 0);
+  const clean = (s) => {
+    s = String(s || '').replace(/_{2,}|\.{3,}|…+/g, ' ').replace(/[\s:*]+$/, '').replace(/^[\s:*]+/, '').replace(/\s+/g, ' ');
+    if (s.length > 40) { s = s.split(/[.;!?]\s/).pop(); if (s.length > 40) s = s.slice(s.length - 40).replace(/^\S*\s/, ''); }
+    return s.trim();
+  };
+  const overlapsX = (t, p) => t.x < p.x2 - 2 && t.x + t.w > p.x1 + 2;
+  function labelNear(p, check) { // check boxes: right of the box first; then left on the same line (a tall box: beside its top), just below (signature lines), just above
+    if (check) { const right = text.filter((t) => t.x >= p.x2 - 1 && t.x <= p.x2 + 20 && t.y >= p.y1 - 3 && t.y <= p.y2).sort((a, b) => a.x - b.x)[0]; if (right && clean(right.s)) return clean(right.s); }
+    const level = (t) => (p.kind === 'line' ? Math.abs(t.y - p.y1) <= Math.max(4, t.size * 0.7) : t.y >= p.y1 - 3 && t.y <= p.y2 + 2);
+    const left = text.filter((t) => t.x + t.w <= p.x1 + 3 && t.x + t.w >= p.x1 - 160 && level(t)).sort((a, b) => b.x + b.w - (a.x + a.w) || b.y - a.y)[0];
+    if (left && clean(left.s)) return clean(left.s);
+    const below = text.filter((t) => overlapsX(t, p) && t.y < p.y1 - 1 && t.y >= p.y1 - 14).sort((a, b) => b.y - a.y)[0];
+    if (below && clean(below.s)) return clean(below.s);
+    const above = text.filter((t) => overlapsX(t, p) && t.y > p.y2 + 1 && t.y <= p.y2 + 16).sort((a, b) => a.y - b.y)[0];
+    return above ? clean(above.s) : '';
+  }
+  const found = [];
+  if ((input.widgets || []).length) { // a real PDF form: its own fields are the best source
+    for (const w of input.widgets) {
+      if (w.hidden || !w.rect || w.pushButton || !['Tx', 'Btn', 'Ch', 'Sig'].includes(w.fieldType)) continue;
+      const [x1, y1, x2, y2] = [Math.min(w.rect[0], w.rect[2]), Math.min(w.rect[1], w.rect[3]), Math.max(w.rect[0], w.rect[2]), Math.max(w.rect[1], w.rect[3])];
+      const p = { kind: 'box', x1, y1, x2, y2, src: 'form' }, name = String(w.fieldName || '').split('.').pop().replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
+      p.label = clean(w.alternativeText) || labelNear(p, w.fieldType === 'Btn') || clean(name);
+      p.type = w.fieldType === 'Sig' ? 'signature' : w.fieldType === 'Btn' ? 'checkbox' : w.multiLine ? 'textarea' : fieldType(p.label) === 'date' ? 'date' : 'text';
+      if (w.radioButton && w.buttonValue) p.label = clean(p.label + ' ' + w.buttonValue);
+      found.push(p);
+    }
+  } else { // a flat PDF: fill-in lines written as text (____ or ....), drawn lines, empty boxes, check boxes
+    const widthOf = (ch) => (ch === '_' ? 0.556 : ch === '.' || ch === ' ' || ch === ',' ? 0.278 : ch === ch.toUpperCase() && ch !== ch.toLowerCase() ? 0.667 : 0.5);
+    for (const t of text) {
+      const chars = [...t.s], ws = chars.map(widthOf), sum = ws.reduce((a, b) => a + b, 0), at = (i) => t.x + t.w * ws.slice(0, i).reduce((a, b) => a + b, 0) / sum;
+      const re = /_{4,}|\.{6,}|…{3,}/g; let mm, prev = 0;
+      while ((mm = re.exec(t.s))) {
+        const a = [...t.s.slice(0, mm.index)].length, b = a + [...mm[0]].length, p = { kind: 'line', x1: at(a), x2: at(b), y1: t.y, y2: t.y, size: t.size, src: 'text' };
+        p.label = clean(chars.slice(prev, a).join('')) || labelNear(p); prev = b;
+        if (p.x2 - p.x1 >= 20) found.push(p);
+      }
+      if (/^[☐□❏▢]$/.test(t.s.trim())) { const p = { kind: 'box', x1: t.x, x2: t.x + t.w, y1: t.y - t.size * 0.1, y2: t.y + t.w - t.size * 0.1, type: 'checkbox', src: 'glyph' }; p.label = labelNear(p, true); found.push(p); }
+    }
+    const shapes = input.shapes || [];
+    for (const s of shapes.filter((x) => x.kind === 'line')) { // the parts of a drawn line that carry no text are fill-in lines
+      const on = text.filter((t) => t.y >= s.y1 - 2 && t.y <= s.y1 + 14 && t.x < s.x2 && t.x + t.w > s.x1).sort((a, b) => a.x - b.x);
+      let from = s.x1;
+      for (const t of on.concat([{ x: s.x2, w: 0 }])) {
+        if (t.x - from >= 36) { const p = { kind: 'line', x1: from, x2: Math.min(t.x, s.x2), y1: s.y1, y2: s.y1, src: 'line' }; p.label = labelNear(p); found.push(p); }
+        from = Math.max(from, t.x + t.w + 2);
+      }
+    }
+    for (const s of shapes.filter((x) => x.kind === 'box')) {
+      const w = s.x2 - s.x1, hgt = s.y2 - s.y1;
+      if (w <= 18 && hgt <= 18 && Math.abs(w - hgt) <= 2.5) { // a small square: a check box, labelled to its right or left
+        found.push({ kind: 'box', x1: s.x1, x2: s.x2, y1: s.y1, y2: s.y2, type: 'checkbox', label: labelNear(s, true), src: 'box' });
+        continue;
+      }
+      if (w < 30 || hgt < 10 || hgt > 150 || shapes.some((o) => o !== s && o.x1 >= s.x1 - 1 && o.x2 <= s.x2 + 1 && o.y1 >= s.y1 + 2 - (o.kind === 'box' ? 3 : 0) && o.y2 <= s.y2 - 2 + (o.kind === 'box' ? 3 : 0))) continue; // frames around other boxes or lines are not fields
+      const inside = text.filter((t) => t.x >= s.x1 - 1 && t.x < s.x2 && t.y > s.y1 - 1 && t.y < s.y2);
+      const p = { kind: 'box', x1: s.x1, x2: s.x2, y1: s.y1, y2: s.y2, src: 'box' };
+      if (inside.length) { // a caption in the top of the box ("Name, first name") leaves the space below it for the value
+        const low = Math.min(...inside.map((t) => t.y - t.size * 0.25));
+        if (low - s.y1 < 10 || inside.some((t) => t.y < s.y1 + hgt * 0.55)) continue;
+        p.y2 = low - 1; p.label = clean(inside.sort((a, b) => b.y - a.y || a.x - b.x).map((t) => t.s).join(' '));
+      } else p.label = labelNear(p);
+      found.push(p);
+    }
+  }
+  // one proposal per place: forms, boxes and check boxes before lines; nothing where a field already is
+  const rank = { form: 0, box: 1, glyph: 1, text: 2, line: 3 }, kept = [];
+  const area = (p) => ({ x1: p.x1, x2: p.x2, y1: p.y1 - 3, y2: Math.max(p.y2, p.y1 + 10) });
+  const clash = (a, b) => { const A = area(a), B = area(b), ov = Math.min(A.x2, B.x2) - Math.max(A.x1, B.x1); return ov > 0.5 * Math.min(A.x2 - A.x1, B.x2 - B.x1) && Math.min(A.y2, B.y2) - Math.max(A.y1, B.y1) > 2; };
+  for (const p of found.sort((a, b) => rank[a.src] - rank[b.src])) {
+    const A = area(p);
+    if (kept.some((k) => clash(k, p)) || (input.existing || []).some((f) => f.page === input.page && f.x >= A.x1 - 2 && f.x <= A.x2 + 2 && f.y >= A.y1 - 4 && f.y <= A.y2 + 4)) continue;
+    kept.push(p);
+  }
+  return kept.sort((a, b) => b.y2 - a.y2 || a.x1 - b.x1).map((p) => { // where and how large the value prints
+    const w = p.x2 - p.x1, hgt = p.y2 - p.y1, type = p.type || (fieldType(p.label) !== 'text' ? fieldType(p.label) : p.kind === 'box' && hgt >= 34 ? 'textarea' : 'text');
+    const f = { label: p.label || '', type, page: input.page, source: p.src };
+    if (type === 'checkbox') { const size = clamp(Math.round(Math.min(w, hgt) * 0.85), 6, 14); Object.assign(f, { size, x: p.x1 + (w - 0.667 * size) / 2, y: p.y1 + (hgt - 0.718 * size) / 2, maxWidth: 0 }); }
+    else if (type === 'signature') Object.assign(f, p.kind === 'line' ? { x: p.x1 + 2, y: p.y1 + 1, maxWidth: Math.min(w - 4, 220), height: 36 } : { x: p.x1 + 2, y: p.y1 + 2, maxWidth: w - 4, height: clamp(hgt - 4, 5, 80) });
+    else if (p.kind === 'line') { const size = clamp(Math.round(p.size || 10), 7, 11); Object.assign(f, { size, x: p.x1 + 2, y: p.y1 + 2, maxWidth: w - 4 }); }
+    else if (type === 'textarea') { const size = clamp(Math.round(hgt * 0.55), 7, 10); Object.assign(f, { size, x: p.x1 + 3, y: p.y2 - 3 - size * 0.8, maxWidth: w - 6 }); }
+    else { const size = clamp(Math.round(hgt * 0.55), 7, 11); Object.assign(f, { size, x: p.x1 + 3, y: p.y1 + Math.max(1.5, (hgt - 0.7 * size) / 2), maxWidth: w - 6 }); }
+    for (const k of ['x', 'y', 'maxWidth', 'height']) if (f[k] !== undefined) f[k] = r1(f[k]);
+    return f;
+  });
+}
+async function detectPage(page, OPS, existing) { // one pdf.js page -> proposed fields (horizontal text only; scans without text need OCR)
+  const [ann, tc, ops] = await Promise.all([page.getAnnotations(), page.getTextContent(), page.getOperatorList()]);
+  const text = tc.items.filter((i) => typeof i.str === 'string' && Math.abs(i.transform[1]) < 1e-3 && Math.abs(i.transform[2]) < 1e-3 && i.transform[0] > 0)
+    .map((i) => ({ s: i.str, x: i.transform[4], y: i.transform[5], w: i.width, size: Math.abs(i.transform[3]) || i.height }));
+  return proposeFields({ page: page.pageNumber, widgets: ann.filter((a) => a.subtype === 'Widget'), text, shapes: pathShapes(ops.fnArray, ops.argsArray, OPS), existing });
+}
+const DETECT_JS = [pathShapes, fieldType, proposeFields, detectPage].map(String).join('\n') + '\n';
 const adminDoc = (d) => ({ ...d, password: undefined, protected: !!d.password });
 const publicDoc = (d, req) => ({
   title: d.title, description: d.description, tags: d.tags, siteTitle: db.settings.siteTitle,
@@ -336,6 +469,15 @@ function fmtDate(v, fmt) {
 }
 async function renderPdf(doc, fields, values, rotation = doc.rotation, preview = false) {
   const pdf = await PDFDocument.load(readTemplate(doc.id));
+  // form fields of the template would be drawn over the stamped values (and are lost when a page is rotated): their look becomes page content
+  try {
+    const form = pdf.getForm(), blank = pdf.context.register(pdf.context.formXObject([], { BBox: [0, 0, 1, 1] }));
+    for (const f of form.getFields()) for (const w of f.acroField.getWidgets()) { // hidden widgets would show once flat, ones without a look (empty signatures) make flatten() fail
+      if (w.hasFlag(AnnotationFlags.Hidden) || w.hasFlag(AnnotationFlags.NoView) || !(w.getAppearances() || {}).normal) w.setNormalAppearance(blank);
+    }
+    if (form.getFields().length) form.flatten();
+    for (const pg of pdf.getPages()) { const an = pg.node.Annots(); if (an) for (let i = an.size() - 1; i >= 0; i--) if (!pdf.context.lookup(an.get(i))) an.remove(i); } // flatten() leaves references to the widgets it deleted
+  } catch (e) { /* a broken form stays as it is */ }
   if (rotation && rotation.some(Boolean)) await applyRotation(pdf, rotation);
   let font, fallback = null;
   if (fontkit && fs.existsSync(FONT)) { pdf.registerFontkit(fontkit); font = await pdf.embedFont(fs.readFileSync(FONT), { subset: true }); }
@@ -675,6 +817,7 @@ async function route(req, res) {
         return json(res, 200, { ok: true });
       }
     }
+    if (a[2] === '/pdf' && m === 'GET') return send(res, 200, readTemplate(doc.id), 'application/pdf'); // the untouched template, for field detection
     if (a[2] === '/pdf' && m === 'PUT') {
       const buf = await readBody(req, MAX_PDF); doc.pages = await inspectPdf(buf);
       fs.writeFileSync(pdfPath(doc.id), buf, { mode: 0o600 }); pdfCache.delete(doc.id); doc.rotation = cleanRotation([], doc.pages); doc.fields = cleanFields(doc.fields, doc.pages); doc.updated = Date.now(); save();
@@ -726,7 +869,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { parseSaved, mergeSaved, start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { parseSaved, mergeSaved, pathShapes, fieldType, proposeFields, detectPage, start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -805,6 +948,8 @@ details.panel[open]>summary::before{transform:rotate(90deg)}details.panel:not([o
 .mk.on{border-style:solid;border-color:#e8590c;background:rgba(232,89,12,.14);z-index:2}
 .mk span{position:absolute;left:-1.5px;bottom:100%;font-size:10px;font-weight:600;line-height:1.3;padding:1px 5px;background:#2f6bff;color:#fff;white-space:nowrap;border-radius:3px 3px 0 0}
 .mk.on span{background:#e8590c}
+.mk.prop{border-color:#2b8a3e;background:rgba(43,138,62,.12);cursor:pointer}.mk.prop span{background:#2b8a3e}.mk.prop.off{opacity:.35}
+.detect{margin-bottom:10px}.plist{max-height:34vh;overflow:auto;margin-top:8px}.prow{display:flex;gap:6px;align-items:center;padding:3px 0}.prow input[type=text]{flex:1 1 auto;width:auto;min-width:0;padding:6px 9px}.prow select{flex:0 0 15em;width:15em;max-width:45%;padding-block:6px}.prow.off{opacity:.55}
 .rz{position:absolute;right:-7px;width:12px;height:12px;background:#e8590c;border:2px solid #fff;border-radius:3px;box-shadow:0 0 0 1px #e8590c;z-index:3;touch-action:none}
 .rz.br{bottom:-7px;cursor:nwse-resize}.rz.tr{top:-7px;cursor:nesw-resize}
 .flist{border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;background:var(--card)}
@@ -1258,7 +1403,7 @@ async function formView() {
 `);
 
 // ---------------------------------------------------------------- admin page
-const ADMIN_HTML = page('Forms admin', '<header><a href="/admin" id="home">' + LOGO_SVG + '<span id="homeT">Forms admin</span></a><span class="sp"></span><span id="nav" class="row"></span></header>', String.raw`
+const ADMIN_HTML = page('Forms admin', '<header><a href="/admin" id="home">' + LOGO_SVG + '<span id="homeT">Forms admin</span></a><span class="sp"></span><span id="nav" class="row"></span></header>', DETECT_JS + String.raw`
 const app = $('#app');
 let me = null, dirty = false, lastHash = location.hash;
 const TYPES = { text: t('Text'), textarea: t('Multi-line text'), date: t('Date'), checkbox: t('Checkbox (X)'), image: t('Image (upload)'), signature: t('Signature (draw or upload)'), static: t('Fixed text (not editable)') };
@@ -1408,7 +1553,60 @@ async function editView(id) {
       }
       return m;
     }));
+    for (const p of (props || []).filter(x => x.f.page === pageNo)) { // detected fields not added yet: green, a click takes one in or out
+      const f = p.f, pt = vp.convertToViewportPoint(f.x, f.y), img = IMG(f.type), s = vp.scale;
+      const w = (f.type === 'checkbox' ? f.size * 0.75 : f.maxWidth) * s, hgt = img ? f.height * s : f.size * s * 1.1, top = img ? pt[1] - hgt : pt[1] - f.size * s * 0.85;
+      const m = h('div', { class: 'mk prop' + (p.on ? '' : ' off'), title: t('Click to include or leave out'), style: 'left:' + pt[0] + 'px;top:' + top + 'px;width:' + w + 'px;height:' + hgt + 'px' }, h('span', {}, f.label || '?'));
+      m.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); p.on = !p.on; review(); markers(); });
+      ov.append(m);
+    }
   }
+  // ---- field detection: proposals from the template's own form fields, fill-in lines and boxes; nothing changes until they are added
+  let props = null;
+  const reviewBox = h('div', { class: 'panel detect', hidden: true });
+  async function detect() {
+    const buf = await api('GET', '/api/admin/docs/' + id + '/pdf', undefined, true), pdf = await openPdf(buf), found = [];
+    let skipped = 0;
+    for (let n = 1; n <= Math.min(pdf.numPages, 50); n++) {
+      if (d.rotation[n - 1]) { skipped++; continue; } // the template's coordinates no longer match a rotated page
+      found.push(...await detectPage(await pdf.getPage(n), pdfjs.OPS, d.fields));
+    }
+    props = found.map(f => ({ f, on: true })); props.skipped = skipped;
+    review(); markers();
+    const first = found[0]; if (first && first.page !== pageNo) { pageNo = first.page; redraw().catch(fail); }
+  }
+  function review() {
+    if (!props) { reviewBox.hidden = true; return; }
+    const on = props.filter(p => p.on).length, close = () => { props = null; review(); markers(); };
+    const typeSel = p => { const s = h('select', { onchange: () => { p.f.type = s.value; markers(); } }, ...Object.entries(TYPES).filter(([k]) => k !== 'static' && k !== 'image').map(([k, v]) => h('option', { value: k, selected: k === p.f.type }, v))); return s; };
+    reviewBox.hidden = false;
+    reviewBox.replaceChildren(...[
+      h('div', { class: 'row' }, h('strong', {}, props.length ? t('{n} fields found').replace('{n}', props.length) : t('No fields found')), h('span', { class: 'grow' }),
+        props.length > 0 && h('button', { class: 'pri', id: 'propAdd', disabled: !on, onclick: accept }, t('Add selected fields') + ' (' + on + ')'),
+        h('button', { id: 'propDiscard', onclick: close }, props.length ? t('Discard') : t('Close'))),
+      h('div', { class: 'hint' }, props.length ? t('Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.')
+        : t('This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.')),
+      props.skipped > 0 && h('div', { class: 'hint' }, t('Rotated pages were left out.')),
+      props.length > 0 && h('div', { class: 'plist' }, ...props.map(p => h('div', { class: 'prow' + (p.on ? '' : ' off') },
+        h('input', { type: 'checkbox', checked: p.on, title: t('Include this field'), onchange: e => { p.on = e.target.checked; review(); markers(); } }),
+        h('input', { type: 'text', value: p.f.label, placeholder: t('Label'), oninput: e => { p.f.label = e.target.value; } }), typeSel(p),
+        h('button', { class: 'small', title: t('Show on the page'), onclick: () => { if (p.f.page !== pageNo) { pageNo = p.f.page; redraw().catch(fail); } } }, t('Page ') + p.f.page))))].filter(Boolean));
+  }
+  function accept() {
+    const take = props.filter(p => p.on);
+    for (const p of take) {
+      const f = p.f, label = f.label.trim() || t('Field ') + (d.fields.length + 1);
+      let key = keyOf(label), i = 2; const base = key;
+      while (d.fields.some(x => x.key === key)) key = base + '_' + i++;
+      d.fields.push({ id: 'f' + Math.random().toString(36).slice(2, 10), key, label, group: '', type: f.type, required: false, hidden: false, page: f.page, x: f.x, y: f.y,
+        size: f.size || 11, maxWidth: f.maxWidth || 0, height: f.height || 0, dateFormat: DATEFMT[0], prefill: 'none', value: '' });
+    }
+    props = null; review(); mark(); side(); redraw().catch(fail);
+    toast(t('{n} fields added. Check them, then save.').replace('{n}', take.length));
+  }
+  const detectBtn = h('button', { id: 'detectBtn', title: t('Finds the fields of the PDF and proposes them, aligned and sized'), onclick: async () => {
+    detectBtn.disabled = true; try { await detect(); } catch (e) { fail(e); } detectBtn.disabled = false;
+  } }, t('Detect fields'));
   function resize(e, f, m) {
     e.preventDefault(); e.stopPropagation();
     const img = IMG(f.type), sx = e.clientX, sy = e.clientY, s = vp.scale;
@@ -1462,7 +1660,7 @@ async function editView(id) {
   const repl = h('input', { type: 'file', accept: 'application/pdf,.pdf', style: 'display:none', onchange: async () => {
     const f = repl.files[0]; if (!f) return;
     if (dirty && !confirm(t('Replacing the PDF discards unsaved changes. Continue?'))) { repl.value = ''; return; }
-    try { d = await api('PUT', '/api/admin/docs/' + id + '/pdf', f); dirty = false; saveBtn.textContent = t('Saved'); saveBtn.disabled = true; pageNo = 1; side(); await redraw(); toast(t('PDF replaced')); } catch (e) { fail(e); }
+    try { d = await api('PUT', '/api/admin/docs/' + id + '/pdf', f); props = null; review(); dirty = false; saveBtn.textContent = t('Saved'); saveBtn.disabled = true; pageNo = 1; side(); await redraw(); toast(t('PDF replaced')); } catch (e) { fail(e); }
     repl.value = '';
   } });
   async function save() {
@@ -1579,7 +1777,7 @@ async function editView(id) {
         h('button', { onclick: () => { if (pageNo > 1) { pageNo--; redraw().catch(fail); } } }, '‹'), pageLbl, h('button', { onclick: () => { if (pageNo < d.pages) { pageNo++; redraw().catch(fail); } } }, '›'),
         h('span', { class: 'muted small', style: 'margin-left:10px' }, t('Rotate')), h('button', { class: 'small', title: t('Rotate 90° counter-clockwise'), onclick: () => rotBy(-90) }, '⟲'), rotIn, h('button', { class: 'small', title: t('Rotate 90° clockwise'), onclick: () => rotBy(90) }, '⟳'),
         h('span', { class: 'grow' }), h('span', { class: 'muted small' }, t('Double-click the page to add a field · drag to move')),
-        h('button', { onclick: () => { const c = vp ? vp.convertToPdfPoint(vp.width / 2, vp.height / 3) : [72, 700]; addField(c[0], c[1]); } }, t('Add field'))), stage),
+        detectBtn, h('button', { onclick: () => { const c = vp ? vp.convertToPdfPoint(vp.width / 2, vp.height / 3) : [72, 700]; addField(c[0], c[1]); } }, t('Add field'))), reviewBox, stage),
       h('details', { class: 'panel ed-doc', open: docOpen(), ontoggle: e => setDocOpen(e.target.open) }, h('summary', {}, t('Document settings')),
           h('label', {}, t('Title')), title, h('label', {}, t('Description')), desc, h('label', {}, t('Tags (comma-separated)')), tags,
           h('label', { class: 'chk', style: 'margin-top:12px' }, listed, t('Show in the public document list')),

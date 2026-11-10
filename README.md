@@ -16,6 +16,9 @@ household. [More screenshots](docs/screenshots.md).
 
 - **Visual editor**: double-click on the rendered page to add a field, drag to move or resize it.
   Text, multi-line text, date, checkbox, image, signature (drawing pad or upload) and fixed text.
+- **Field detection**: "Detect fields" reads the PDF and proposes its fields, aligned with the form,
+  sized to their boxes and typed (text, multi-line, date, checkbox, signature). It uses the fields of
+  a PDF form, or fill-in lines, boxes and check boxes of a flat one; you pick which to add.
 - **Prefill**: a field can be remembered in the visitor's browser, fixed by the admin, carried in
   the link (`/d/<link>#key=value`), or default to today's date. One switch on the form covers
   everything remembered, pictures included, with the number of days next to it; every group has a

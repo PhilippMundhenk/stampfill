@@ -225,5 +225,19 @@
  "Saved values": "Gespeicherte Werte",
  "This is not a file of saved values from this service": "Das ist keine Datei mit gespeicherten Werten dieses Dienstes",
  "The browser storage is full; some values could not be imported": "Der Browserspeicher ist voll; einige Werte konnten nicht importiert werden",
- "Imported: {a} new, {u} updated, {k} unchanged": "Importiert: {a} neu, {u} aktualisiert, {k} unverändert"
+ "Imported: {a} new, {u} updated, {k} unchanged": "Importiert: {a} neu, {u} aktualisiert, {k} unverändert",
+ "Click to include or leave out": "Klicken zum Aufnehmen oder Weglassen",
+ "{n} fields found": "{n} Felder gefunden",
+ "No fields found": "Keine Felder gefunden",
+ "Add selected fields": "Ausgewählte Felder hinzufügen",
+ "Discard": "Verwerfen",
+ "Green boxes show where each value will print. Untick what you do not need; labels and types can be changed here or later.": "Grüne Rahmen zeigen, wo jeder Wert gedruckt wird. Entferne den Haken bei allem, was du nicht brauchst; Beschriftungen und Typen lassen sich hier oder später ändern.",
+ "This works with PDF forms and with forms that have fill-in lines or boxes. Scanned pages have no text to read; place their fields by hand.": "Das funktioniert mit PDF-Formularen und mit Formularen, die Ausfüllinien oder Kästchen haben. Gescannte Seiten enthalten keinen lesbaren Text; platziere ihre Felder von Hand.",
+ "Rotated pages were left out.": "Gedrehte Seiten wurden ausgelassen.",
+ "Include this field": "Dieses Feld aufnehmen",
+ "Label": "Beschriftung",
+ "Show on the page": "Auf der Seite zeigen",
+ "{n} fields added. Check them, then save.": "{n} Felder hinzugefügt. Prüfe sie und speichere dann.",
+ "Finds the fields of the PDF and proposes them, aligned and sized": "Findet die Felder des PDFs und schlägt sie passend ausgerichtet und bemessen vor",
+ "Detect fields": "Felder erkennen"
 }

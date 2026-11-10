@@ -639,6 +639,58 @@ test('admin rotates the link and deletes the document', async () => {
   await expect(admin.getByText('No documents yet')).toBeVisible();
 });
 
+test('the editor detects the fields of a PDF form and of a flat form', async () => {
+  const fx = require('../fixtures/detect-forms.js'), dir = path.resolve('test-results');
+  const upload = async (name, bytes) => {
+    const file = path.join(dir, name + '.pdf'); fs.writeFileSync(file, bytes);
+    await admin.goto('/admin'); await admin.setInputFiles('input[type=file]', file);
+    await expect(admin.locator('.wrap canvas')).toBeVisible();
+  };
+  // a PDF form: its own fields, with labels from the page and types from the field kinds
+  await upload('acro-form', await fx.acroForm());
+  await admin.click('#detectBtn');
+  await expect(admin.locator('.detect strong')).toHaveText('5 fields found');
+  await expect(admin.locator('.mk.prop')).toHaveCount(5);
+  expect(await admin.locator('.prow input[type=text]').evaluateAll((els) => els.map((e) => /** @type {HTMLInputElement} */ (e).value)))
+    .toEqual(['Full name', 'Date of birth', 'Remarks', 'I agree', 'Signature of the applicant']);
+  expect(await admin.locator('.prow select').evaluateAll((els) => els.map((e) => /** @type {HTMLSelectElement} */ (e).value))).toEqual(['text', 'date', 'textarea', 'checkbox', 'signature']);
+  await shot(admin, '2b-detect-fields');
+  await admin.locator('.mk.prop').nth(2).dispatchEvent('pointerdown'); // leave "Remarks" out by clicking its box
+  await expect(admin.locator('.prow').nth(2)).toHaveClass(/off/);
+  await admin.locator('.prow input[type=text]').first().fill('Name');
+  await admin.locator('.prow select').nth(1).selectOption('text');
+  await admin.click('#propAdd');
+  await expect(admin.locator('#toast')).toHaveText('4 fields added. Check them, then save.');
+  await expect(admin.locator('.detect')).toBeHidden(); await expect(admin.locator('.mk:not(.prop)')).toHaveCount(4);
+  await admin.click('text=Save changes'); await expect(admin.locator('#toast')).toHaveText('Saved');
+  // a second run proposes only what is not there yet; the rest of the list can be thrown away
+  await admin.click('#detectBtn'); await expect(admin.locator('.detect strong')).toHaveText('1 fields found');
+  await admin.locator('.prow input[type=checkbox]').uncheck(); await expect(admin.locator('#propAdd')).toBeDisabled();
+  await admin.locator('.prow input[type=checkbox]').check(); await admin.locator('.prow button').click();
+  await admin.click('#propDiscard'); await expect(admin.locator('.detect')).toBeHidden(); await expect(admin.locator('.mk')).toHaveCount(4);
+  const id = (await admin.evaluate(() => location.hash)).slice(5);
+  const doc = await (await admin.request.get('/api/admin/docs/' + id)).json();
+  expect(doc.fields.map((f) => [f.label, f.type, f.page])).toEqual([['Name', 'text', 1], ['Date of birth', 'text', 1], ['I agree', 'checkbox', 1], ['Signature of the applicant', 'signature', 1]]);
+  expect(doc.fields[0]).toMatchObject({ x: 152.5, y: 758.2, size: 11, maxWidth: 245 });
+
+  // a flat form with fill-in lines, a box with a caption, a check box and a signature line
+  await upload('flat-form', await fx.flatForm());
+  await admin.click('#detectBtn');
+  await expect(admin.locator('.detect strong')).toHaveText('6 fields found');
+  expect(await admin.locator('.prow input[type=text]').evaluateAll((els) => els.map((e) => /** @type {HTMLInputElement} */ (e).value)))
+    .toEqual(['Name', 'Street', 'Date', 'Reason for the request', 'Send me the newsletter', 'Signature']);
+  await admin.click('#propAdd'); await admin.click('text=Save changes'); await expect(admin.locator('#toast')).toHaveText('Saved');
+
+  // a page rotated in the editor is left out; a scan without text finds nothing
+  await admin.fill('#rotIn', '90'); await admin.locator('#rotIn').dispatchEvent('change');
+  await admin.click('#detectBtn'); await expect(admin.locator('.detect strong')).toHaveText('No fields found');
+  await expect(admin.locator('.detect')).toContainText('Rotated pages were left out.');
+  await admin.click('#propDiscard');
+  await upload('blank', await (async () => { const { PDFDocument } = require('pdf-lib'); const p = await PDFDocument.create(); p.addPage([200, 200]); return p.save(); })());
+  await admin.click('#detectBtn'); await expect(admin.locator('.detect strong')).toHaveText('No fields found');
+  await expect(admin.locator('.detect')).toContainText('Scanned pages have no text to read');
+});
+
 test('no browser errors were logged', () => {
   expect(errors).toEqual([]);
 });
