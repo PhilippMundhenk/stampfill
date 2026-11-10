@@ -13,7 +13,7 @@ that do are often broken or flattened.
 A field is a position on a page (PDF points, bottom-left origin) plus a type and size. Rendering
 draws text, an `X`, or an image at that position with pdf-lib. The editor renders the page with
 pdf.js and converts clicks and drags between pixels and points through the same viewport, so what
-the admin sees is what prints. Existing form fields in a template are not filled. Since #77 the
+the admin sees is what prints. Existing form fields in a template are not filled. Since 1.2.0 the
 editor can read them to propose stampfill fields in the same places, and rendering flattens them
 so they cannot cover the stamped values.
 
