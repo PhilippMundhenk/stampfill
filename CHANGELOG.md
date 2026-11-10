@@ -6,8 +6,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [1.2.0] - 2026-11-10
-
 ### Added
 - Every form can be installed as a progressive web app that opens that form directly: per-document
   web app manifest with a limited scope, generated icons, an "Install as app" button and a small
