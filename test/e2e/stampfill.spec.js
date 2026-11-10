@@ -431,46 +431,56 @@ test('browser-remembered values survive a reload, link values do not', async () 
   await expect(user.locator('#f_date')).toHaveValue(TODAY); // "today" is recomputed on every open, not remembered
 });
 
-test('saved values move to another device as a file, without overwriting newer ones there', async ({ baseURL }) => {
-  await user.click('#savedMove'); await expect(user.locator('dialog h2')).toHaveText('Move saved values to another device');
-  await shot(user, '4b-move-saved-values');
-  const [dl] = await Promise.all([user.waitForEvent('download'), user.click('#savedExport')]);
-  expect(dl.suggestedFilename()).toBe('stampfill-saved-values-' + TODAY + '.json');
+test('the data of a form goes to a file and comes back on another device, stored there', async ({ baseURL }) => {
+  await user.fill('#f_reference', 'REF-1'); await user.check('#f_agree'); // not remembered, but part of this form's data
+  const [dl] = await Promise.all([user.waitForEvent('download'), user.click('#formExport')]);
+  expect(dl.suggestedFilename()).toBe('sample-form-' + TODAY + '.json');
   const exported = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
-  expect(exported).toMatchObject({ stampfill: 'saved-values', version: 1, days: 7 });
-  expect(exported.entries.full_name.v).toBe('Jürgen Müller-Weiß'); expect(exported.entries.signature.v).toMatch(/^data:image\/png;base64,/);
-  expect(Object.keys(exported.entries)).not.toContain('lang'); expect(Object.keys(exported.entries)).not.toContain('remember');
-  const before = await user.evaluate(() => JSON.stringify(Object.entries(localStorage).sort()));
+  expect(exported).toMatchObject({ stampfill: 'form-data', version: 1, title: 'sample-form' });
+  expect(exported.values).toMatchObject({ full_name: 'Jürgen Müller-Weiß', reference: 'REF-1', agree: '1', date: TODAY });
+  expect(exported.values.signature).toMatch(/^data:image\/png;base64,/);
+  expect(Object.keys(exported.values)).not.toContain('issued_by'); // hidden fixed values belong to the admin
+  expect(Object.keys(exported.values)).not.toContain('footer'); // fixed text is not filled in
+  const fileOf = (o) => ({ name: 'form.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ ...exported, ...o })) });
 
-  // the other device: remembering switched off, nothing to export yet, and one value of its own that is newer
+  // another device: wrong files change nothing, the right one fills the form and stays after a reload
   const ctx = await browser.newContext({ baseURL, viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
   const other = track(await ctx.newPage(), 'other device');
-  await other.addInitScript(() => { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('stampfill:remember', '0'); } });
   await other.goto(link); await expect(other.locator('.preview canvas')).toBeVisible();
-  await other.click('#savedMove'); await other.click('#savedExport');
-  await expect(other.locator('#toast')).toHaveText('Nothing is saved on this device yet');
-  await other.evaluate(() => localStorage.setItem('stampfill:address', JSON.stringify({ v: 'Newer street 1', t: Date.now() + 60000 })));
-  await other.setInputFiles('.rembox input[type=file]', { name: 'other.json', mimeType: 'application/json', buffer: Buffer.from('{"stampfill":"something-else"}') });
-  await expect(other.locator('#toast')).toHaveText('This is not a file of saved values from this service');
-  await other.setInputFiles('.rembox input[type=file]', { name: 'saved.json', mimeType: 'application/json', buffer: fs.readFileSync(await dl.path()) });
-  await expect(other.locator('#toast')).toHaveText(/^Imported: \d+ new, 0 updated, 1 unchanged$/);
-  await expect(other.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
-  await expect(other.locator('#f_address')).toHaveValue('Newer street 1'); // newer on this device: kept
+  await other.setInputFiles('#formImport ~ input[type=file]', { name: 'x.json', mimeType: 'application/json', buffer: Buffer.from('{"stampfill":"saved-values","version":1}') });
+  await expect(other.locator('#toast')).toHaveText('This is not a file of form data from this service');
+  await other.setInputFiles('#formImport ~ input[type=file]', fileOf({ values: { nothing_here: 'x' } }));
+  await expect(other.locator('#toast')).toHaveText('None of the values in the file belong to this form');
+  await expect(other.locator('#f_full_name')).toHaveValue('');
+  await other.setInputFiles('#formImport ~ input[type=file]', fileOf({}));
+  await expect(other.locator('#toast')).toHaveText('Form filled in from the file and stored on this device.');
+  await expect(other.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß'); await expect(other.locator('#f_reference')).toHaveValue('REF-1');
+  await expect(other.locator('#f_agree')).toBeChecked();
   await expect(other.locator('.imgbox:has(#f_signature) .thumb')).toHaveAttribute('src', /^data:image\/png;base64,/);
-  await expect(other.locator('.rembox input[type=checkbox]')).toBeChecked(); // importing switches remembering on
-  await expect(other.locator('.rembox input[type=number]')).toHaveValue('7');
   await other.reload(); await expect(other.locator('.preview canvas')).toBeVisible();
-  await expect(other.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß'); // stored, not only shown
-  await expect(other.locator('.fgrp.closed')).toHaveCount(0); // the folded groups came along and apply from the next open
-  await expect(other.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
+  await expect(other.locator('#f_reference')).toHaveValue('REF-1'); await expect(other.locator('#f_agree')).toBeChecked();
+  for (const g of await other.locator('.fgrp.closed .gtog').all()) await g.click(); // groups start folded on a new device
+  await other.fill('#f_reference', 'REF-2'); await expect.poll(() => other.evaluate(() => localStorage.getItem('stampfill:form:' + location.pathname.split('/').pop()) || '')).toContain('REF-2');
+  await other.reload(); await expect(other.locator('#f_reference')).toHaveValue('REF-2'); // later edits are kept too
+  await other.goto(link + '#reference=FROM-LINK'); await other.reload(); await expect(other.locator('#f_reference')).toHaveValue('FROM-LINK'); // a link still wins
+  // a file of another form fills what matches and says so
+  await other.setInputFiles('#formImport ~ input[type=file]', fileOf({ form: 'other-form', title: 'Other form', values: { reference: 'REF-3', unknown: 'x' } }));
+  await expect(other.locator('#toast')).toHaveText('Form filled in from the file and stored on this device. The file comes from another form ("Other form"); the matching fields were filled in.');
+  await expect(other.locator('#f_reference')).toHaveValue('REF-3');
+  // switching remembering off removes the stored form; an import while it is off fills in without storing, and switching on stores it
+  await other.locator('.rembox input[type=checkbox]').uncheck();
+  await other.goto(link); await expect(other.locator('#f_reference')).toHaveValue('');
+  await other.setInputFiles('#formImport ~ input[type=file]', fileOf({}));
+  await expect(other.locator('#toast')).toHaveText('Form filled in from the file. Remembering is switched off, so it is not stored on this device.');
+  await expect(other.locator('#f_reference')).toHaveValue('REF-1');
+  await other.locator('.rembox input[type=checkbox]').check();
+  await other.reload(); await expect(other.locator('#f_reference')).toHaveValue('REF-1');
   // a phone hands the export to the share sheet instead of downloading it
   await other.evaluate(() => { /** @type {any} */ (navigator).canShare = () => true; /** @type {any} */ (navigator).share = async (d) => { /** @type {any} */ (window).__shared = d.files[0].name; }; });
-  await other.click('#savedMove'); await other.click('#savedExport');
-  await expect.poll(() => other.evaluate(() => /** @type {any} */ (window).__shared)).toBe('stampfill-saved-values-' + TODAY + '.json');
+  await other.click('#formExport');
+  await expect.poll(() => other.evaluate(() => /** @type {any} */ (window).__shared)).toBe('sample-form-' + TODAY + '.json');
   await cov.stop(other); await ctx.close();
-
-  // exporting changed nothing on the first device
-  expect(await user.evaluate(() => JSON.stringify(Object.entries(localStorage).sort()))).toBe(before);
+  await user.fill('#f_reference', ''); await user.uncheck('#f_agree'); // the rest of the story expects the form as it was
 });
 
 test('image print fallback renders pages and calls window.print', async () => {

@@ -290,32 +290,17 @@ async function applyRotation(pdf, rotation) {
 // groups that start folded on the form: names of groups that exist, each once
 const cleanCollapsed = (list, fields) => { const names = new Set(fields.map((f) => f.group).filter(Boolean)); return [...new Set((Array.isArray(list) ? list : []).filter((x) => typeof x === 'string').map((x) => str(x, 40).trim()).filter((x) => names.has(x)))]; };
 const cleanTags = (t) => [...new Set((Array.isArray(t) ? t : []).map((x) => str(x, 30).trim()).filter(Boolean))].slice(0, 20);
-// Saved values travel between devices as a file the visitor exports and imports (the server never sees it).
-// Both functions run in the public page (their source is inlined there) and in the unit tests.
-function parseSaved(text) { // file text -> { entries: { key: { v, t } }, days }; throws 'bad' for anything else
+// The data of one form travels as a file the visitor exports and imports (the server never sees it).
+// The function runs in the public page (its source is inlined there) and in the unit tests.
+function parseFormData(text) { // file text -> { form, title, values: { key: string } }; throws 'bad' for anything else
   let o;
   try { o = typeof text === 'string' && text.length <= 20e6 ? JSON.parse(text) : null; } catch (e) { o = null; }
-  if (!o || typeof o !== 'object' || o.stampfill !== 'saved-values' || o.version !== 1 || !o.entries || typeof o.entries !== 'object' || Array.isArray(o.entries)) throw new Error('bad');
-  const entries = {}, reserved = ['lang', 'docOpen', 'days', 'remember'];
-  for (const [k, e] of Object.entries(o.entries)) {
-    if (!/^[\w:.-]{1,120}$/.test(k) || reserved.includes(k) || !e || typeof e !== 'object') continue;
-    const t = typeof e.t === 'number' && e.t >= 0 && isFinite(e.t) ? e.t : 0, v = e.v;
-    const okObj = v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'boolean'); // group states
-    if ((typeof v === 'string' && v !== '' && v.length <= 5e6) || okObj) entries[k] = { v, t };
-  }
-  const days = Math.round(+o.days);
-  return { entries, days: days >= 1 && days <= 3650 ? days : null };
+  if (!o || typeof o !== 'object' || o.stampfill !== 'form-data' || o.version !== 1 || !o.values || typeof o.values !== 'object' || Array.isArray(o.values)) throw new Error('bad');
+  const values = {};
+  for (const [k, v] of Object.entries(o.values)) if (/^[\w-]{1,80}$/.test(k) && typeof v === 'string' && v.length <= 5e6) values[k] = v;
+  return { form: typeof o.form === 'string' ? o.form.slice(0, 80) : '', title: typeof o.title === 'string' ? o.title.slice(0, 120) : '', values };
 }
-function mergeSaved(local, incoming, now, ttl) { // never deletes, never overwrites a newer value of this device
-  const set = {}; let added = 0, updated = 0, kept = 0;
-  for (const [k, e] of Object.entries(incoming)) {
-    if (e.t && now - e.t > ttl) continue; // expired on the other device's clock already: not worth bringing over
-    const mine = local[k];
-    if (!mine) { set[k] = { v: e.v, t: e.t || now }; added++; } else if (e.t > mine.t && JSON.stringify(e.v) !== JSON.stringify(mine.v)) { set[k] = { v: e.v, t: e.t }; updated++; } else kept++;
-  }
-  return { set, added, updated, kept };
-}
-const SAVED_JS = [parseSaved, mergeSaved].map(String).join('\n') + '\n';
+const FORMDATA_JS = String(parseFormData) + '\n';
 
 // Field detection for the editor: pdf.js reads the template in the admin's browser, these functions turn
 // what it finds into proposed fields. Like the two above, they run in the page and in the unit tests.
@@ -869,7 +854,7 @@ if (require.main === module) {
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
   start().catch((e) => { console.error(e.message); process.exit(1); });
 }
-module.exports = { parseSaved, mergeSaved, pathShapes, fieldType, proposeFields, detectPage, start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
+module.exports = { parseFormData, pathShapes, fieldType, proposeFields, detectPage, start, server, db, DATA, IMAGES, IMG, LANGS, migrate, drawIcon, manifestFor, SW_JS, pdfCache, readTemplate, PDF_CACHE_MAX, AUDIT, AUDIT_MAX, audit, fails, authFails, pruneFails, imgDims, checkImage, ippParse, ippProbe, ippStatusText, keyOf, slugOf, fmtDate, toIso, cleanPrefill, cleanRotation, imgType, cleanFields, groupOrder, cleanCollapsed, cleanTags, cleanValues, sampleValues, renderPdf, ippPrint, checkPw, hashPw, inspectPdf };
 
 // ================================================================ front end
 // (client code below must not contain backticks or dollar-brace: it lives inside String.raw templates)
@@ -1068,7 +1053,7 @@ function page(title, body, js) { // the inline script is a constant, so the CSP 
 }
 
 // ---------------------------------------------------------------- public page: list + form
-const PUBLIC_HTML = page('Forms', '<header><a href="/" id="home">' + LOGO_SVG + '<span id="homeT">Forms</span></a><span class="sp"></span></header>', SAVED_JS + String.raw`
+const PUBLIC_HTML = page('Forms', '<header><a href="/" id="home">' + LOGO_SVG + '<span id="homeT">Forms</span></a><span class="sp"></span></header>', FORMDATA_JS + String.raw`
 const app = $('#app');
 const slug = (location.pathname.match(/^\/d\/([\w-]+)$/) || [])[1];
 (slug ? formView() : listView()).catch(fail);
@@ -1163,6 +1148,10 @@ async function formView() {
   try { // sweep: remembered values of other forms expire too, even if those forms are never opened again
     for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith(LS) && k !== LS + 'lang' && k !== LS + 'docOpen' && k !== LS + 'days' && k !== LS + 'remember') store.get(k.slice(LS.length)); }
   } catch (e) { /* storage unavailable */ }
+  // a form imported from a file is kept as a whole on this device and kept current; it comes after link values and before everything else
+  const FD = 'form:' + slug, fillable = f => !(f.hidden && f.prefill === 'instance'); // a hidden fixed value is the admin's, not the visitor's
+  let fdata = (v => (v && typeof v === 'object' ? v : null))(store.get(FD));
+  const fromForm = f => (fdata && fillable(f) && typeof fdata[f.key] === 'string' ? fdata[f.key] : null);
   const inputs = {}, rows = {};
   const get = f => f.type === 'checkbox' ? (inputs[f.key].checked ? '1' : '') : f.type === 'date' ? parseUi(inputs[f.key].value) : inputs[f.key].value;
   const put = (f, v) => { if (IMG(f.type)) inputs[f.key].set(v); else if (f.type === 'checkbox') inputs[f.key].checked = !!v && v !== '0' && v !== 'false'; else inputs[f.key].value = f.type === 'date' ? fmtUi(toIso(v)) : v; };
@@ -1188,7 +1177,7 @@ async function formView() {
     const df = f.type === 'date' && dateField('', 'f_' + f.key);
     const inp = inputs[f.key] = df ? df.input : f.type === 'textarea' ? h('textarea', { rows: 3 }) : h('input', { type: f.type === 'checkbox' ? 'checkbox' : 'text' });
     inp.id = 'f_' + f.key;
-    const saved = f.prefill === 'browser' ? store.get(f.key) : null;
+    const saved = fromForm(f) != null ? fromForm(f) : f.prefill === 'browser' ? store.get(f.key) : null;
     put(f, fromUrl.has(f.key) ? fromUrl.get(f.key) : saved != null ? saved : f.prefill === 'instance' ? f.value : f.prefill === 'today' ? today() : '');
     inp.addEventListener('input', () => { if (f.prefill === 'browser') store.set(f.key, get(f)); rows[f.key].classList.remove('bad'); schedule(); });
     const name = f.label + (f.required ? ' *' : '');
@@ -1208,7 +1197,7 @@ async function formView() {
     const draw = f.type === 'signature' && h('button', { class: 'small', onclick: () => sigPad(v => { st.set(v); changed(); }) }, t('Draw signature'));
     const show = () => { const src = st.value || fixedUrl; if (src) thumb.src = src; thumb.style.display = src ? '' : 'none'; clear.style.display = st.value ? '' : 'none'; pick.textContent = src ? t('Replace image') : t('Choose image'); };
     st.set = v => { st.value = v || ''; show(); };
-    const saved = f.prefill === 'browser' ? store.get(f.key) : null;
+    const saved = fromForm(f) != null ? fromForm(f) : f.prefill === 'browser' ? store.get(f.key) : null;
     const remember = () => { if (f.prefill === 'browser') store.set(f.key, st.value); }; // like every other field: under the one switch on the form
     const changed = () => { remember(); rows[f.key].classList.remove('bad'); schedule(); };
     file.addEventListener('change', async () => { const fl = file.files[0]; file.value = ''; if (!fl) return; try { st.set(await imageData(fl, 1200)); changed(); } catch (e) { fail(e); } });
@@ -1266,7 +1255,7 @@ async function formView() {
       return buf;
     } finally { if (my === seq) pv.classList.remove('busy'); }
   }
-  function schedule() { clearTimeout(timer); timer = setTimeout(() => refresh().catch(fail), 200); }
+  function schedule() { clearTimeout(timer); timer = setTimeout(() => refresh().catch(fail), 200); if (fdata) { fdata = Object.fromEntries(doc.fields.filter(fillable).map(f => [f.key, get(f)])); store.set(FD, fdata); } }
   function complete() {
     const miss = doc.fields.filter(f => f.required && !f.hidden && !get(f) && !(IMG(f.type) && f.prefill === 'instance' && f.value));
     miss.forEach(f => { rows[f.key].classList.add('bad'); const sec = rows[f.key].closest('.fgrp.closed'); if (sec) sec.querySelector('.gtog').click(); }); // a folded group opens to show what is missing
@@ -1332,71 +1321,48 @@ async function formView() {
   const browserFields = () => doc.fields.filter(f => f.prefill === 'browser');
   remChk.addEventListener('change', () => {
     REMEMBER = remChk.checked; lsSet('remember', REMEMBER ? '1' : '0'); form.classList.toggle('norem', !REMEMBER);
-    if (REMEMBER) browserFields().forEach(f => store.set(f.key, get(f))); else { browserFields().forEach(f => store.set(f.key, '')); toast(t('Saved values removed from this browser')); }
+    if (REMEMBER) { browserFields().forEach(f => store.set(f.key, get(f))); if (fdata) store.set(FD, fdata); } else { browserFields().forEach(f => store.set(f.key, '')); store.set(FD, ''); fdata = null; toast(t('Saved values removed from this browser')); }
   });
   daysIn.addEventListener('change', () => { DAYS = Math.min(3650, Math.max(1, Math.round(+daysIn.value) || DEF_DAYS)); daysIn.value = DAYS; TTL = DAYS * 86400000; lsSet('days', String(DAYS)); });
   form.classList.toggle('norem', !REMEMBER);
-  // saved values move to another device as a file, exported here and imported there; nothing passes through the server
-  const savedHere = () => {
-    const out = {};
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i), key = k && k.startsWith(LS) ? k.slice(LS.length) : null;
-        if (!key || ['lang', 'docOpen', 'days', 'remember'].includes(key)) continue;
-        const raw = localStorage.getItem(k); let e = null;
-        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) e = { v: o.v, t: +o.t || 0 }; } catch (err) { /* value from an older version */ }
-        out[key] = e || { v: raw, t: 0 };
-      }
-    } catch (err) { /* storage unavailable */ }
-    return out;
-  };
-  async function exportSaved() {
-    const entries = savedHere();
-    if (!Object.keys(entries).length) return toast(t('Nothing is saved on this device yet'), true);
-    const name = 'stampfill-saved-values-' + today() + '.json';
-    const file = new File([JSON.stringify({ stampfill: 'saved-values', version: 1, exported: new Date().toISOString(), days: DAYS, entries })], name, { type: 'application/json' });
+  // the data of this form goes to a file and comes back from one; an imported form stays stored on this device (under the remember switch)
+  async function exportForm() {
+    const vals = Object.fromEntries(doc.fields.filter(fillable).map(f => [f.key, get(f)]));
+    if (!Object.values(vals).some(Boolean)) return toast(t('Nothing is filled in yet'), true);
+    const name = (doc.title.replace(/[^\w.-]+/g, '_') || 'form') + '-' + today() + '.json';
+    const file = new File([JSON.stringify({ stampfill: 'form-data', version: 1, form: slug, title: doc.title, exported: new Date().toISOString(), values: vals })], name, { type: 'application/json' });
     if (matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) { // phones: the share sheet reaches the other device directly
-      try { await navigator.share({ files: [file], title: t('Saved values') }); return; } catch (err) { if (err.name === 'AbortError') return; }
+      try { await navigator.share({ files: [file], title: doc.title }); return; } catch (err) { if (err.name === 'AbortError') return; }
     }
     const a = h('a', { href: URL.createObjectURL(file), download: name }); document.body.append(a); a.click(); a.remove();
   }
   const importPick = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: async () => {
     const file = importPick.files[0]; importPick.value = ''; if (!file) return;
     let data = null;
-    try { data = parseSaved(await file.text()); } catch (err) { return toast(t('This is not a file of saved values from this service'), true); }
-    const r = mergeSaved(savedHere(), data.entries, Date.now(), TTL);
-    let full = false;
-    for (const [k, e] of Object.entries(r.set)) { try { localStorage.setItem(LS + k, JSON.stringify(e)); } catch (err) { full = true; } }
-    if (lsGet('days') == null && data.days) { DAYS = data.days; TTL = DAYS * 86400000; daysIn.value = DAYS; lsSet('days', String(DAYS)); }
-    if (!REMEMBER) { REMEMBER = true; remChk.checked = true; lsSet('remember', '1'); form.classList.remove('norem'); } // importing is asking to remember
-    browserFields().forEach(f => { const v = store.get(f.key); if (v != null) put(f, v); });
+    try { data = parseFormData(await file.text()); } catch (err) { return toast(t('This is not a file of form data from this service'), true); }
+    const fields = doc.fields.filter(f => fillable(f) && f.key in data.values);
+    if (!fields.length) return toast(t('None of the values in the file belong to this form'), true);
+    for (const f of fields) { put(f, data.values[f.key]); if (f.prefill === 'browser') store.set(f.key, data.values[f.key]); rows[f.key].classList.remove('bad'); }
+    fdata = Object.fromEntries(doc.fields.filter(fillable).map(f => [f.key, get(f)])); store.set(FD, fdata);
     schedule();
-    toast(full ? t('The browser storage is full; some values could not be imported')
-      : t('Imported: {a} new, {u} updated, {k} unchanged').replace('{a}', r.added).replace('{u}', r.updated).replace('{k}', r.kept), full);
+    const other = data.form && data.form !== slug ? ' ' + t('The file comes from another form ("{title}"); the matching fields were filled in.').replace('{title}', data.title) : '';
+    toast((REMEMBER ? t('Form filled in from the file and stored on this device.') : t('Form filled in from the file. Remembering is switched off, so it is not stored on this device.')) + other);
   } });
-  function moveDialog() {
-    const dlg = h('dialog', { class: 'sigdlg helpdlg', style: 'max-width:min(480px, calc(100vw - 32px))' }, h('h2', {}, t('Move saved values to another device')),
-      h('p', {}, t('Export what this device remembers for this site into a file, send the file to your other device, and import it there in any form of this site. Values that are newer on the other device stay as they are.')),
-      h('p', { class: 'hint' }, t('The file contains your saved entries, pictures and signatures. Keep it private and delete it once it is imported.')),
-      h('div', { class: 'row', style: 'margin-top:12px' },
-        h('button', { id: 'savedExport', onclick: async () => { dlg.close(); await exportSaved(); } }, t('Export file')),
-        h('button', { id: 'savedImport', onclick: () => { dlg.close(); importPick.click(); } }, t('Import file')),
-        h('span', { class: 'grow' }), h('button', { class: 'pri', onclick: () => dlg.close() }, t('Close'))));
-    dlg.addEventListener('close', () => dlg.remove()); document.body.append(dlg); dlg.showModal();
-  }
   const [daysBefore, daysAfter] = t('Keep for {n} days').split('{n}');
   if (has('browser')) form.append(h('div', { class: 'rembox' },
     h('label', { class: 'chk' }, remChk, t('Remember my entries on this device')),
     h('label', { class: 'chk days' }, daysBefore.trim(), daysIn, daysAfter.trim()),
-    h('div', { class: 'hint' }, t('Applies to the marked fields, including pictures. Switching it off removes what is saved here.')),
-    h('button', { type: 'button', class: 'small', id: 'savedMove', style: 'margin-top:8px', onclick: moveDialog }, t('Move to another device')), importPick));
+    h('div', { class: 'hint' }, t('Applies to the marked fields, including pictures. Switching it off removes what is saved here.'))));
   form.append(h('div', { class: 'actions' },
     h('div', { class: 'row' },
       h('button', { class: 'pri', onclick: guard(browserPrint) }, t('Print')),
       doc.serverPrint && h('button', { onclick: guard(serverPrint) }, doc.printLabel || 'Print at home'),
       h('button', { onclick: guard(download) }, t('Download PDF'))),
     has('url') && h('div', { class: 'row', style: 'margin-top:10px' },
-      h('button', { class: 'small', onclick: shareLink, title: t('Copies a link that opens this form with the marked fields filled in') }, t('Copy link with values')))));
+      h('button', { class: 'small', onclick: shareLink, title: t('Copies a link that opens this form with the marked fields filled in') }, t('Copy link with values'))),
+    doc.fields.some(fillable) && h('div', { class: 'row', style: 'margin-top:10px' },
+      h('button', { class: 'small', id: 'formExport', onclick: guard(exportForm), title: t('Saves everything entered in this form to a file, pictures and signatures included') }, t('Export form data')),
+      h('button', { class: 'small', id: 'formImport', onclick: () => importPick.click(), title: t('Fills this form from a file and keeps it on this device') }, t('Import form data')), importPick)));
   app.append(h('h1', {}, doc.title), doc.description && h('p', { class: 'muted', style: 'margin-top:-8px' }, doc.description), h('div', { class: 'split' }, form, pv));
   await refresh();
 }
