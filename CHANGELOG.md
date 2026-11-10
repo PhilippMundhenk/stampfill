@@ -17,11 +17,12 @@ All notable changes to this project are documented here. The format follows
   and drag handle, grouped fields move within their group, loose fields move past whole groups,
   a field dropped on another joins that field's group, and groups can be renamed in one go. The
   form shows a rule where loose fields follow a group. (#56)
-- Saved values can move to another device: "Move to another device" on the form exports
-  everything the browser remembers for the site (entries, pictures, signatures, folded groups)
-  into a file, shared through the phone's share sheet or downloaded, and imports such a file on
-  the other device. An import only adds missing values and replaces older ones; values that are
-  newer on the receiving device stay as they are. Nothing passes through the server. (#76)
+- "Export form data" saves everything entered in the current form to a file (every field the
+  visitor fills, pictures and signatures included), through the phone's share sheet or as a
+  download. "Import form data" fills the form from such a file and keeps it on that device as
+  the form's data, under the remember switch and its number of days; later edits are kept too,
+  values from a link still win, and switching remembering off removes it. A file of another form
+  fills the fields that match. Nothing passes through the server. (#81)
 - "Detect fields" in the editor finds the fields of a template and proposes them as stampfill
   fields, positioned on the form, sized to fit each box and typed from the field kind or the label
   (date and signature words in all eight interface languages). It reads the fields of PDF forms
