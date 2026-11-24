@@ -15,7 +15,12 @@ const file = (o) => JSON.stringify({ stampfill: 'saved-values', version: 1, entr
 
 test('parseSaved accepts the exported format and keeps entries with their timestamps', () => {
   const out = app.parseSaved(file({ days: 7, entries: { full_name: { v: 'Erika Mustermann', t: NOW }, 'groups:abc': { v: { Applicant: true }, t: NOW - DAY }, legacy: { v: 'x' } } }));
-  assert.deepEqual(out, { days: 7, entries: { full_name: { v: 'Erika Mustermann', t: NOW }, 'groups:abc': { v: { Applicant: true }, t: NOW - DAY }, legacy: { v: 'x', t: 0 } } });
+  assert.deepEqual(out, { days: 7, entries: { full_name: { v: 'Erika Mustermann', t: NOW, a: NOW }, 'groups:abc': { v: { Applicant: true }, t: NOW - DAY, a: NOW - DAY }, legacy: { v: 'x', t: 0, a: 0 } } });
+});
+
+test('parseSaved keeps the last use of the form, never earlier than the last change (#85)', () => {
+  const out = app.parseSaved(file({ entries: { used: { v: 'x', t: NOW - 20 * DAY, a: NOW }, before: { v: 'x', t: NOW, a: NOW - DAY }, junk: { v: 'x', t: NOW, a: 'soon' }, inf: { v: 'x', t: NOW, a: Infinity } } }));
+  assert.deepEqual(out.entries, { used: { v: 'x', t: NOW - 20 * DAY, a: NOW }, before: { v: 'x', t: NOW, a: NOW }, junk: { v: 'x', t: NOW, a: NOW }, inf: { v: 'x', t: NOW, a: NOW } });
 });
 
 test('parseSaved rejects anything that is not a saved-values file', () => {
@@ -31,7 +36,7 @@ test('parseSaved drops reserved, malformed and oversized entries and bad day cou
     mixed: { v: { a: true, b: 'no' }, t: NOW }, nul: null, str: 'plain', big: { v: 'x'.repeat(5e6 + 1), t: NOW }, neg: { v: 'ok', t: -5 }, inf: { v: 'ok', t: Infinity },
   } }));
   assert.equal(out.days, null);
-  assert.deepEqual(out.entries, { neg: { v: 'ok', t: 0 }, inf: { v: 'ok', t: 0 } });
+  assert.deepEqual(out.entries, { neg: { v: 'ok', t: 0, a: 0 }, inf: { v: 'ok', t: 0, a: 0 } });
   assert.equal(app.parseSaved(file({ days: '12' })).days, 12);
   assert.equal(app.parseSaved(file({ days: 0 })).days, null);
 });
@@ -40,17 +45,26 @@ test('mergeSaved adds missing values, updates older ones and keeps newer or equa
   const local = { a: { v: 'mine', t: NOW - 2 * DAY }, b: { v: 'mine, newer', t: NOW }, c: { v: 'same', t: NOW - 5 * DAY }, legacy: { v: 'old format', t: 0 } };
   const incoming = { a: { v: 'theirs', t: NOW - DAY }, b: { v: 'theirs, older', t: NOW - DAY }, c: { v: 'same', t: NOW - DAY }, legacy: { v: 'new', t: NOW - DAY }, d: { v: 'new key', t: NOW - DAY } };
   const r = app.mergeSaved(local, incoming, NOW, TTL);
-  assert.deepEqual(r.set, { a: { v: 'theirs', t: NOW - DAY }, legacy: { v: 'new', t: NOW - DAY }, d: { v: 'new key', t: NOW - DAY } });
+  assert.deepEqual(r.set, { a: { v: 'theirs', t: NOW - DAY, a: NOW - DAY }, legacy: { v: 'new', t: NOW - DAY, a: NOW - DAY }, d: { v: 'new key', t: NOW - DAY, a: NOW - DAY } });
   assert.deepEqual([r.added, r.updated, r.kept], [1, 2, 2]);
   assert.ok(!('b' in r.set) && !('c' in r.set), 'nothing newer or identical on this device is touched');
 });
 
 test('mergeSaved skips expired values and dates undated ones to the import', () => {
   const r = app.mergeSaved({}, { old: { v: 'x', t: NOW - TTL - 1 }, undated: { v: 'y', t: 0 }, groups: { v: { G: false }, t: NOW } }, NOW, TTL);
-  assert.deepEqual(r.set, { undated: { v: 'y', t: NOW }, groups: { v: { G: false }, t: NOW } });
+  assert.deepEqual(r.set, { undated: { v: 'y', t: NOW, a: NOW }, groups: { v: { G: false }, t: NOW, a: NOW } });
   assert.deepEqual([r.added, r.updated, r.kept], [2, 0, 0]);
   const same = app.mergeSaved({ groups: { v: { G: false }, t: 1 } }, { groups: { v: { G: false }, t: NOW } }, NOW, TTL);
   assert.deepEqual([same.added, same.updated, same.kept], [0, 0, 1], 'equal objects count as unchanged');
+});
+
+test('mergeSaved: a value changed long ago but used recently is not expired, and use never wins over a change (#85)', () => {
+  const incoming = { kept: { v: 'old but used', t: NOW - TTL - DAY, a: NOW - DAY }, gone: { v: 'old, unused', t: NOW - TTL - DAY, a: NOW - TTL - 1 }, x: { v: 'theirs, only used', t: NOW - 10 * DAY, a: NOW } };
+  const r = app.mergeSaved({ x: { v: 'mine, changed later', t: NOW - 5 * DAY, a: NOW - 5 * DAY } }, incoming, NOW, TTL);
+  assert.deepEqual(r.set, { kept: { v: 'old but used', t: NOW - TTL - DAY, a: NOW - DAY } });
+  assert.deepEqual([r.added, r.updated, r.kept], [1, 0, 1], 'a recent use on the other device does not make its older value win');
+  const up = app.mergeSaved({ y: { v: 'mine', t: NOW - 9 * DAY, a: NOW } }, { y: { v: 'theirs', t: NOW - 2 * DAY, a: NOW - 2 * DAY } }, NOW, TTL);
+  assert.deepEqual(up.set, { y: { v: 'theirs', t: NOW - 2 * DAY, a: NOW } }, 'an update keeps the later use of both devices');
 });
 
 test('the public page carries both functions, the admin page does not', async () => {

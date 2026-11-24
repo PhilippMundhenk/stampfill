@@ -292,7 +292,7 @@ const cleanCollapsed = (list, fields) => { const names = new Set(fields.map((f) 
 const cleanTags = (t) => [...new Set((Array.isArray(t) ? t : []).map((x) => str(x, 30).trim()).filter(Boolean))].slice(0, 20);
 // Saved values travel between devices as a file the visitor exports and imports (the server never sees it).
 // Both functions run in the public page (their source is inlined there) and in the unit tests.
-function parseSaved(text) { // file text -> { entries: { key: { v, t } }, days }; throws 'bad' for anything else
+function parseSaved(text) { // file text -> { entries: { key: { v, t, a } }, days }; throws 'bad' for anything else
   let o;
   try { o = typeof text === 'string' && text.length <= 20e6 ? JSON.parse(text) : null; } catch (e) { o = null; }
   if (!o || typeof o !== 'object' || o.stampfill !== 'saved-values' || o.version !== 1 || !o.entries || typeof o.entries !== 'object' || Array.isArray(o.entries)) throw new Error('bad');
@@ -300,18 +300,21 @@ function parseSaved(text) { // file text -> { entries: { key: { v, t } }, days }
   for (const [k, e] of Object.entries(o.entries)) {
     if (!/^[\w:.-]{1,120}$/.test(k) || reserved.includes(k) || !e || typeof e !== 'object') continue;
     const t = typeof e.t === 'number' && e.t >= 0 && isFinite(e.t) ? e.t : 0, v = e.v;
+    const a = typeof e.a === 'number' && e.a >= t && isFinite(e.a) ? e.a : t; // last use of the form; files from before #85 have only t
     const okObj = v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => typeof x === 'boolean'); // group states
-    if ((typeof v === 'string' && v !== '' && v.length <= 5e6) || okObj) entries[k] = { v, t };
+    if ((typeof v === 'string' && v !== '' && v.length <= 5e6) || okObj) entries[k] = { v, t, a };
   }
   const days = Math.round(+o.days);
   return { entries, days: days >= 1 && days <= 3650 ? days : null };
 }
 function mergeSaved(local, incoming, now, ttl) { // never deletes, never overwrites a newer value of this device
+  // t is when a value was last changed and decides which value wins; a is when its form was last used and decides when it expires
   const set = {}; let added = 0, updated = 0, kept = 0;
   for (const [k, e] of Object.entries(incoming)) {
-    if (e.t && now - e.t > ttl) continue; // expired on the other device's clock already: not worth bringing over
+    const used = Math.max(e.a || 0, e.t || 0);
+    if (used && now - used > ttl) continue; // expired on the other device's clock already: not worth bringing over
     const mine = local[k];
-    if (!mine) { set[k] = { v: e.v, t: e.t || now }; added++; } else if (e.t > mine.t && JSON.stringify(e.v) !== JSON.stringify(mine.v)) { set[k] = { v: e.v, t: e.t }; updated++; } else kept++;
+    if (!mine) { set[k] = { v: e.v, t: e.t || now, a: used || now }; added++; } else if (e.t > mine.t && JSON.stringify(e.v) !== JSON.stringify(mine.v)) { set[k] = { v: e.v, t: e.t, a: Math.max(used, mine.a || 0, mine.t || 0) }; updated++; } else kept++;
   }
   return { set, added, updated, kept };
 }
@@ -1154,12 +1157,23 @@ async function formView() {
     get(k) {
       try {
         const raw = localStorage.getItem(LS + k); if (raw == null) return null;
-        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) { if (Date.now() - o.t > TTL) { localStorage.removeItem(LS + k); return null; } return o.v; } } catch (e) { /* value from an older version */ }
+        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) { if (Date.now() - Math.max(+o.a || 0, +o.t || 0) > TTL) { localStorage.removeItem(LS + k); return null; } return o.v; } } catch (e) { /* value from an older version */ }
         return raw;
       } catch (e) { return null; }
     },
-    set(k, v) { if (!REMEMBER && v !== '') return; try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, JSON.stringify({ v, t: Date.now() })); } catch (e) {} },
+    set(k, v) { if (!REMEMBER && v !== '') return; try { v === '' ? localStorage.removeItem(LS + k) : localStorage.setItem(LS + k, JSON.stringify({ v, t: Date.now(), a: Date.now() })); } catch (e) {} touchForm(); },
+    touch(k, now) { // the form was used: the value stays as long as its newest neighbour, without counting as changed
+      try { const raw = localStorage.getItem(LS + k); if (raw == null) return; const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o && (+o.a || +o.t || 0) < now) { o.a = now; localStorage.setItem(LS + k, JSON.stringify(o)); } } catch (e) { /* value from an older version or storage full */ }
+    },
   };
+  // any use of a form (editing any value, downloading, printing) extends everything it remembers equally (#85);
+  // at most once a minute, because pictures can be large and typing calls this on every key
+  let touchedAt = 0;
+  function touchForm(force) {
+    const now = Date.now(); if (!REMEMBER || (!force && now - touchedAt < 60000)) return; touchedAt = now;
+    for (const f of doc.fields) if (f.prefill === 'browser') store.touch(f.key, now);
+    if (doc.rememberGroups) store.touch('groups:' + slug, now);
+  }
   try { // sweep: remembered values of other forms expire too, even if those forms are never opened again
     for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith(LS) && k !== LS + 'lang' && k !== LS + 'docOpen' && k !== LS + 'days' && k !== LS + 'remember') store.get(k.slice(LS.length)); }
   } catch (e) { /* storage unavailable */ }
@@ -1277,6 +1291,7 @@ async function formView() {
 
   async function browserPrint() {
     if (!complete()) return;
+    touchForm(true);
     const buf = await fresh();
     // Chromium desktop prints the PDF itself (vector); everything else prints high-resolution page images
     if (navigator.pdfViewerEnabled && /Chrome\//.test(navigator.userAgent) && !/Android|Mobile/.test(navigator.userAgent)) {
@@ -1308,11 +1323,13 @@ async function formView() {
   window.stampfillImagePrint = async () => imagePrint(await fresh()); // manual fallback / test hook
   async function download() {
     if (!complete()) return;
+    touchForm(true);
     const a = h('a', { href: URL.createObjectURL(new Blob([await fresh()], { type: 'application/pdf' })), download: doc.title.replace(/[^\w.-]+/g, '_') + '.pdf' });
     document.body.append(a); a.click(); a.remove();
   }
   async function serverPrint() {
     if (!complete()) return;
+    touchForm(true);
     const r = await api('POST', '/api/d/' + slug + '/print', { values: values(), copies: 1 });
     toast(t('Sent to the printer') + (r.jobId ? t(' (job ') + r.jobId + ')' : ''));
   }
@@ -1344,7 +1361,7 @@ async function formView() {
         const k = localStorage.key(i), key = k && k.startsWith(LS) ? k.slice(LS.length) : null;
         if (!key || ['lang', 'docOpen', 'days', 'remember'].includes(key)) continue;
         const raw = localStorage.getItem(k); let e = null;
-        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) e = { v: o.v, t: +o.t || 0 }; } catch (err) { /* value from an older version */ }
+        try { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'v' in o) e = { v: o.v, t: +o.t || 0, a: Math.max(+o.a || 0, +o.t || 0) }; } catch (err) { /* value from an older version */ }
         out[key] = e || { v: raw, t: 0 };
       }
     } catch (err) { /* storage unavailable */ }
@@ -1370,6 +1387,7 @@ async function formView() {
     if (lsGet('days') == null && data.days) { DAYS = data.days; TTL = DAYS * 86400000; daysIn.value = DAYS; lsSet('days', String(DAYS)); }
     if (!REMEMBER) { REMEMBER = true; remChk.checked = true; lsSet('remember', '1'); form.classList.remove('norem'); } // importing is asking to remember
     browserFields().forEach(f => { const v = store.get(f.key); if (v != null) put(f, v); });
+    touchForm(true); // importing into this form is using it
     schedule();
     toast(full ? t('The browser storage is full; some values could not be imported')
       : t('Imported: {a} new, {u} updated, {k} unchanged').replace('{a}', r.added).replace('{u}', r.updated).replace('{k}', r.kept), full);
