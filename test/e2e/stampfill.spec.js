@@ -473,6 +473,55 @@ test('saved values move to another device as a file, without overwriting newer o
   expect(await user.evaluate(() => JSON.stringify(Object.entries(localStorage).sort()))).toBe(before);
 });
 
+test('using a form keeps all its remembered values equally long (#85)', async () => {
+  const DAY = 86400000, RES = ['stampfill:lang', 'stampfill:docOpen', 'stampfill:days', 'stampfill:remember'];
+  // every remembered value of this browser: last changed and last used `ago` ms back (days is 7 here)
+  const age = (/** @type {Record<string, [number, number]>|number} */ ago) => user.evaluate(([a, res]) => {
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith('stampfill:') || res.includes(k)) continue;
+      const o = JSON.parse(localStorage.getItem(k) || 'null'); if (!o || !('v' in o)) continue;
+      const [t, u] = typeof a === 'number' ? [a, a] : (a[k] || a['*']); o.t = Date.now() - t; o.a = Date.now() - u; localStorage.setItem(k, JSON.stringify(o));
+    }
+  }, [ago, RES]);
+  const stamps = () => user.evaluate((res) => Object.fromEntries(Object.keys(localStorage).filter((k) => k.startsWith('stampfill:') && !res.includes(k))
+    .map((k) => { const o = JSON.parse(localStorage.getItem(k) || '{}'); return [k, { t: Date.now() - o.t, a: Date.now() - o.a }]; })), RES);
+  const keys = Object.keys(await stamps());
+  expect(keys).toEqual(expect.arrayContaining(['stampfill:full_name', 'stampfill:address', 'stampfill:signature']));
+
+  // changed 8 days ago but used yesterday: still there; changed and used 8 days ago: gone
+  await age({ 'stampfill:address': [8 * DAY, 8 * DAY], '*': [8 * DAY, DAY] });
+  await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
+  await expect(user.locator('#f_full_name')).toHaveValue('Jürgen Müller-Weiß');
+  await expect(user.locator('.imgbox:has(#f_signature) .thumb')).toBeVisible();
+  await expect(user.locator('#f_address')).toHaveValue('');
+  expect(await user.evaluate(() => localStorage.getItem('stampfill:address'))).toBeNull();
+  await settle(user, () => user.fill('#f_address', 'Musterstraße 1\n12345 Musterstadt'));
+
+  // editing one value extends all the others too, without marking them as changed
+  await age(6 * DAY);
+  await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
+  await settle(user, () => user.fill('#f_full_name', 'Jürgen Müller-Weiß '));
+  await settle(user, () => user.fill('#f_full_name', 'Jürgen Müller-Weiß'));
+  let s = await stamps();
+  for (const k of keys) expect(s[k].a, k + ' last used').toBeLessThan(60000);
+  expect(s['stampfill:full_name'].t).toBeLessThan(60000);
+  expect(s['stampfill:address'].t, 'untouched values keep their change time').toBeGreaterThan(5 * DAY);
+
+  // so does downloading, without typing anything
+  await age(6 * DAY);
+  await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
+  await Promise.all([user.waitForEvent('download'), user.click('text=Download PDF')]);
+  s = await stamps();
+  for (const k of keys) { expect(s[k].a, k + ' last used').toBeLessThan(60000); expect(s[k].t, k + ' not changed').toBeGreaterThan(5 * DAY); }
+
+  // and printing
+  await age(6 * DAY);
+  await user.reload(); await expect(user.locator('.preview canvas')).toBeVisible();
+  await user.evaluate(() => { window.print = () => {}; });
+  await user.click('button.pri:has-text("Print")');
+  await expect.poll(async () => Math.max(...Object.values(await stamps()).map((x) => x.a))).toBeLessThan(60000);
+});
+
 test('image print fallback renders pages and calls window.print', async () => {
   // own page: page.pdf() leaves the page with a suspended network stack, which would break later navigations
   const p = track(await user.context().newPage(), 'print');

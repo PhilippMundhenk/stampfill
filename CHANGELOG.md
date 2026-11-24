@@ -53,6 +53,10 @@ All notable changes to this project are documented here. The format follows
   `docs/deploy.md`, `docs/printing.md` and `docs/screenshots.md`. (#58)
 
 ### Fixed
+- Remembered values of a form expire together: editing any value, downloading or printing the
+  form extends everything it remembers by the full number of days, so values that were not changed
+  no longer disappear before the others. Moved values keep the time of their last change, which
+  still decides which value wins on import. (#85)
 - Values stamped inside a form field of the template were hidden: PDF viewers drew the
   template's own fields (AcroForm) on top of them. Rendering now flattens those fields, so their
   look becomes page content and the values print over it; hidden fields and empty signature

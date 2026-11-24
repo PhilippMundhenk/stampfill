@@ -93,7 +93,8 @@ jobs capped at 5 copies, and request header and body timeouts.
 computer it was still handed to the next person. Fixed: pictures and signatures are only
 remembered under the same switch as text: "Remember my entries on this device" sits on every form
 that remembers anything, starts on or off as the instance setting says, and switching it off removes
-everything saved there. Remembered values expire after 30 days by default; the instance sets the
+everything saved there. Remembered values expire 30 days after the form was last used (edited,
+downloaded or printed), all of a form's values together, by default; the instance sets the
 default and the visitor can change the number next to the switch. The form marks each remembered
 field, and every group has a "Clear" button.
 
